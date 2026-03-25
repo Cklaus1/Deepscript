@@ -1,0 +1,39 @@
+{
+  "text": "Hello everyone, let's get started with the quarterly review. Thanks for joining today. First, let's discuss the Q1 results. We had a strong quarter with revenue up 15%. That's great news. Any questions about the numbers? Yes, what was the breakdown by region? North America was 60%, Europe 30%, and Asia-Pacific 10%. Good. Let's move on to the product roadmap. We've decided to prioritize the mobile app redesign. The team will start next sprint. Action item: Sarah will draft the mobile app requirements by Friday. Another thing, we need to follow up with the design team about the new brand guidelines. Bob, can you handle that? Sure, I'll set up a meeting with them this week. Any other topics? One more thing, we agreed to increase the marketing budget by 20% for Q2. That's a key decision we made last week. Alright, let's wrap up. Great meeting everyone.",
+  "language": "en",
+  "segments": [
+    {"start": 0.0, "end": 4.5, "text": "Hello everyone, let's get started with the quarterly review.", "speaker": "Alice"},
+    {"start": 4.5, "end": 7.0, "text": "Thanks for joining today.", "speaker": "Alice"},
+    {"start": 7.0, "end": 11.0, "text": "First, let's discuss the Q1 results.", "speaker": "Alice"},
+    {"start": 11.0, "end": 16.0, "text": "We had a strong quarter with revenue up 15%.", "speaker": "Alice"},
+    {"start": 16.0, "end": 18.0, "text": "That's great news.", "speaker": "Bob"},
+    {"start": 18.0, "end": 22.0, "text": "Any questions about the numbers?", "speaker": "Alice"},
+    {"start": 22.0, "end": 26.0, "text": "Yes, what was the breakdown by region?", "speaker": "Sarah"},
+    {"start": 26.0, "end": 33.0, "text": "North America was 60%, Europe 30%, and Asia-Pacific 10%.", "speaker": "Alice"},
+    {"start": 33.0, "end": 35.0, "text": "Good.", "speaker": "Sarah"},
+    {"start": 35.0, "end": 39.0, "text": "Let's move on to the product roadmap.", "speaker": "Alice"},
+    {"start": 39.0, "end": 45.0, "text": "We've decided to prioritize the mobile app redesign.", "speaker": "Alice"},
+    {"start": 45.0, "end": 49.0, "text": "The team will start next sprint.", "speaker": "Alice"},
+    {"start": 49.0, "end": 56.0, "text": "Action item: Sarah will draft the mobile app requirements by Friday.", "speaker": "Alice"},
+    {"start": 56.0, "end": 63.0, "text": "Another thing, we need to follow up with the design team about the new brand guidelines.", "speaker": "Alice"},
+    {"start": 63.0, "end": 67.0, "text": "Bob, can you handle that?", "speaker": "Alice"},
+    {"start": 67.0, "end": 72.0, "text": "Sure, I'll set up a meeting with them this week.", "speaker": "Bob"},
+    {"start": 72.0, "end": 75.0, "text": "Any other topics?", "speaker": "Alice"},
+    {"start": 75.0, "end": 83.0, "text": "One more thing, we agreed to increase the marketing budget by 20% for Q2.", "speaker": "Sarah"},
+    {"start": 83.0, "end": 88.0, "text": "That's a key decision we made last week.", "speaker": "Sarah"},
+    {"start": 88.0, "end": 91.0, "text": "Alright, let's wrap up.", "speaker": "Alice"},
+    {"start": 91.0, "end": 94.0, "text": "Great meeting everyone.", "speaker": "Alice"}
+  ],
+  "diarization": {
+    "num_speakers": 3,
+    "speakers_resolved": [
+      {"local_label": "SPEAKER_00", "display_name": "Alice", "status": "confirmed"},
+      {"local_label": "SPEAKER_01", "display_name": "Bob", "status": "confirmed"},
+      {"local_label": "SPEAKER_02", "display_name": "Sarah", "status": "confirmed"}
+    ]
+  },
+  "metadata": {
+    "audio": {"duration_seconds": 94.0},
+    "file": {"name": "quarterly_review.m4a", "size_human": "1.2 MB"}
+  }
+}

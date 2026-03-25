@@ -1,0 +1,41 @@
+Analyze this {ops_type} meeting.
+
+Evaluate based on meeting type:
+
+**For standup:**
+- Blocker detection (who's stuck on what)
+- Sprint progress signals
+- Time discipline (did it stay under 15 minutes?)
+
+**For all-hands:**
+- Key announcements
+- Employee questions (group by theme)
+- Unanswered questions
+- Leadership clarity and sentiment
+
+**For sprint retro:**
+- What went well / didn't / should change
+- Recurring themes (things that keep coming up)
+- Action item follow-through from last retro
+- Psychological safety indicators
+
+**For postmortem:**
+- Incident timeline
+- Root cause identification
+- Contributing factors
+- Blamelessness (was blame assigned or avoided?)
+- Prevention actions
+
+Respond with ONLY a JSON object:
+{{
+  "meeting_type": "{ops_type}",
+  "blockers": [{{"blocker": "description", "owner": "who", "status": "blocked|resolved|escalated"}}],
+  "themes": [{{"theme": "description", "frequency": "recurring|new", "sentiment": "positive|negative|neutral"}}],
+  "announcements": ["announcement 1"],
+  "unanswered_questions": ["question 1"],
+  "action_items": [{{"text": "action", "owner": "who", "priority": "high|medium|low"}}],
+  "assessment": {{"effectiveness": "high|medium|low", "notes": "one sentence"}}
+}}
+
+TRANSCRIPT:
+{transcript}

@@ -1,0 +1,44 @@
+Analyze this {interview_type} interview transcript.
+
+For each answer the candidate gave, evaluate:
+
+1. **STAR Completeness** — Did the answer include:
+   - Situation: Context/background
+   - Task: What was their responsibility
+   - Action: What they specifically did
+   - Result: What was the outcome (ideally quantified)
+
+2. **Competency Mapping** — What competencies does each answer demonstrate?
+
+3. **Evidence Strength** — Is the evidence specific and credible, or vague and generic?
+
+4. **Question Coverage** — Were important areas covered? Any gaps?
+
+Respond with ONLY a JSON object:
+{{
+  "answers": [
+    {{
+      "question": "the interview question",
+      "star_completeness": {{
+        "situation": true,
+        "task": true,
+        "action": true,
+        "result": true,
+        "score": "complete|partial|incomplete"
+      }},
+      "competencies": ["leadership", "problem-solving"],
+      "evidence_strength": "strong|moderate|weak",
+      "notes": "brief assessment"
+    }}
+  ],
+  "overall_star_score": 0.0,
+  "competencies_demonstrated": ["competency 1", "competency 2"],
+  "competency_gaps": ["missing area 1"],
+  "strengths": ["strength 1"],
+  "concerns": ["concern 1"],
+  "recommendation": "strong_yes|yes|maybe|no|strong_no",
+  "recommendation_reasoning": "one sentence"
+}}
+
+TRANSCRIPT:
+{transcript}

@@ -1,0 +1,34 @@
+Score this sales call using the {methodology} methodology.
+
+{methodology_description}
+
+For each dimension, score 0-3:
+- 0: Not discussed at all
+- 1: Briefly mentioned, no depth
+- 2: Discussed with some detail
+- 3: Thoroughly covered with specific evidence
+
+Also identify:
+- Overall score (sum of dimension scores)
+- Strongest areas
+- Gaps to address in follow-up
+
+Respond with ONLY a JSON object:
+{{
+  "methodology": "{methodology}",
+  "scores": {{
+    "dimension_name": {{
+      "score": 0-3,
+      "evidence": "quote or summary from transcript",
+      "notes": "brief assessment"
+    }}
+  }},
+  "total_score": 0,
+  "max_possible": 0,
+  "strengths": ["strength 1", "strength 2"],
+  "gaps": ["gap 1", "gap 2"],
+  "overall_assessment": "one sentence summary"
+}}
+
+TRANSCRIPT:
+{transcript}

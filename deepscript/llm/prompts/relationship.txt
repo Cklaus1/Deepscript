@@ -1,0 +1,57 @@
+Analyze this personal/family/partner conversation for communication health patterns.
+
+Use these research-backed frameworks:
+
+**Gottman Four Horsemen** — detect instances of:
+1. Criticism (attacking character, "you always...", "you never...")
+2. Contempt (disrespect, sarcasm, eye-rolling language, superiority)
+3. Defensiveness (making excuses, cross-complaining, "yes but...")
+4. Stonewalling (withdrawing, shutting down, not responding)
+
+**Bids for Connection** — emotional bids and responses:
+- Turning toward (acknowledging, engaging)
+- Turning away (ignoring, not responding)
+- Turning against (hostile response)
+
+**NVC Patterns** (Nonviolent Communication):
+- Observations vs judgments
+- Feelings vs thoughts
+- Needs vs strategies
+
+Respond with ONLY a JSON object:
+{{
+  "emotional_tone": {{
+    "overall": "warm|neutral|tense|mixed",
+    "arc": "description of how tone shifts during conversation"
+  }},
+  "gottman_indicators": [
+    {{"type": "criticism|contempt|defensiveness|stonewalling", "quote": "exact quote", "timestamp_hint": "context", "reframe": "suggested alternative phrasing"}}
+  ],
+  "appreciation_ratio": {{
+    "positive_count": 0,
+    "negative_count": 0,
+    "ratio": "0:0",
+    "assessment": "healthy (5:1+) | approaching (3:1-5:1) | concerning (<3:1)"
+  }},
+  "bids_for_connection": [
+    {{"bid": "what was said", "speaker": "who", "response": "what the other said", "quality": "toward|away|against"}}
+  ],
+  "repair_attempts": [
+    {{"attempt": "what was said", "speaker": "who", "success": true}}
+  ],
+  "nvc_patterns": {{
+    "observations_vs_judgments": "assessment",
+    "feelings_expressed": true,
+    "needs_stated": true,
+    "examples": ["example 1"]
+  }},
+  "growth_suggestions": [
+    "Specific, gentle, research-backed suggestion 1",
+    "Specific, gentle, research-backed suggestion 2"
+  ]
+}}
+
+Important: Frame everything positively. "Growth opportunity" not "failure". Cite the framework (Gottman, NVC) for each suggestion.
+
+TRANSCRIPT:
+{transcript}

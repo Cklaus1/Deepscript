@@ -1,0 +1,36 @@
+Analyze this {recruiting_type} call.
+
+Evaluate based on the call type:
+
+**For recruiter screen:**
+- Qualification match (does candidate meet requirements?)
+- Red flags (gaps, inconsistencies, concerns)
+- Compensation alignment
+- Culture fit signals
+- Advancement recommendation (advance/hold/reject)
+
+**For reference check:**
+- Reference enthusiasm level (glowing vs faint praise)
+- Specificity of examples given
+- Consistency with candidate claims
+- Rehire conviction ("would you hire them again?")
+
+**For offer negotiation:**
+- Candidate priorities (cash vs equity vs title vs flexibility)
+- Competing offer signals
+- Acceptance probability
+- Commitment language strength
+
+Respond with ONLY a JSON object:
+{{
+  "assessment_type": "{recruiting_type}",
+  "qualification": {{"match_level": "strong|moderate|weak", "key_matches": ["match 1"], "gaps": ["gap 1"]}},
+  "signals": [{{"type": "positive|negative|neutral", "signal": "description", "quote": "supporting quote"}}],
+  "recommendation": "advance|hold|reject",
+  "recommendation_reasoning": "one sentence",
+  "compensation": {{"discussed": true, "aligned": true, "notes": "summary"}},
+  "key_findings": ["finding 1", "finding 2"]
+}}
+
+TRANSCRIPT:
+{transcript}

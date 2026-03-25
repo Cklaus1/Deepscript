@@ -1,0 +1,50 @@
+Analyze this customer discovery call using the {framework} framework.
+
+{framework_description}
+
+Evaluate the call and extract:
+
+1. **Framework Score** (0-10): How well did the interviewer follow the framework?
+
+2. **Pain Points**: Extract specific problems mentioned by the interviewee.
+   For each pain point, assess:
+   - Severity (how painful: high/medium/low)
+   - Frequency (how often it occurs)
+   - Current workaround (if any)
+
+3. **JTBD** (Jobs-to-be-Done): Extract in format "When [situation], I want [motivation], so I can [outcome]"
+
+4. **Commitment Signals**: Evidence of real validation:
+   - Time commitment (agreed to follow-up, demo, etc.)
+   - Reputation commitment (offered introduction, referral)
+   - Money commitment (discussed pricing, budget)
+
+5. **Compliment Traps**: Enthusiasm without commitment (false positives)
+
+6. **Call Phases**: What phases did the call go through?
+
+Respond with ONLY a JSON object:
+{{
+  "framework": "{framework}",
+  "framework_score": 0,
+  "framework_notes": "assessment of interviewer technique",
+  "pain_points": [
+    {{"pain": "description", "severity": "high|medium|low", "frequency": "daily|weekly|monthly|rare", "workaround": "current solution or null", "quote": "supporting quote"}}
+  ],
+  "jtbd": [
+    {{"situation": "when...", "motivation": "I want...", "outcome": "so I can...", "quote": "supporting quote"}}
+  ],
+  "commitment_signals": [
+    {{"type": "time|reputation|money", "signal": "description", "quote": "supporting quote", "strength": "strong|moderate|weak"}}
+  ],
+  "compliment_traps": [
+    {{"trap": "description", "quote": "supporting quote"}}
+  ],
+  "call_phases": [
+    {{"phase": "Context|Current State|Pain|Impact|Workarounds|Wrap-up|Other", "summary": "what happened"}}
+  ],
+  "hidden_opportunities": ["opportunity 1", "opportunity 2"]
+}}
+
+TRANSCRIPT:
+{transcript}

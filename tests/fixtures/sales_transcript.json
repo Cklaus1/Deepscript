@@ -1,0 +1,26 @@
+{
+  "text": "Thanks for taking the time to meet today. I'd love to show you how our platform can help streamline your team's workflow. Can you tell me about your current process? Sure, we're using spreadsheets right now and it's becoming a real pain. We have about 50 people on the team and things fall through the cracks constantly. That sounds frustrating. What's your timeline for making a change? We need something in place by Q2. Our contract with the current vendor renews in June and we'd like to have migrated by then. Great, that gives us a good window. Let me show you the dashboard. As you can see here, this is where your team would manage all their tasks. When we implement this, would each team member have their own login? Yes, absolutely. And the pricing is based on seats. For 50 users, you'd be looking at the enterprise plan. What does that cost? The enterprise plan is $25 per user per month. That's within our budget. I need to check with our VP of Operations though, she's the one who signs off on tools like this. Of course. Should we schedule a follow-up with her included? That would be great. Let me look at my calendar. How about next Tuesday? Perfect. I'll send over a proposal document and we can walk through it together with your VP. One thing though, we're also looking at Asana and Monday.com. How do you compare? Great question. Our key differentiator is the automation engine. Let me show you a quick demo of that. This is impressive. I think our team would really benefit from this. Let me get back to you after I talk to my VP.",
+  "language": "en",
+  "segments": [
+    {"start": 0.0, "end": 8.0, "text": "Thanks for taking the time to meet today. I'd love to show you how our platform can help streamline your team's workflow.", "speaker": "Sales Rep"},
+    {"start": 8.0, "end": 13.0, "text": "Can you tell me about your current process?", "speaker": "Sales Rep"},
+    {"start": 13.0, "end": 22.0, "text": "Sure, we're using spreadsheets right now and it's becoming a real pain. We have about 50 people on the team and things fall through the cracks constantly.", "speaker": "Prospect"},
+    {"start": 22.0, "end": 26.0, "text": "That sounds frustrating. What's your timeline for making a change?", "speaker": "Sales Rep"},
+    {"start": 26.0, "end": 35.0, "text": "We need something in place by Q2. Our contract with the current vendor renews in June and we'd like to have migrated by then.", "speaker": "Prospect"},
+    {"start": 35.0, "end": 42.0, "text": "Great, that gives us a good window. Let me show you the dashboard.", "speaker": "Sales Rep"},
+    {"start": 42.0, "end": 48.0, "text": "As you can see here, this is where your team would manage all their tasks.", "speaker": "Sales Rep"},
+    {"start": 48.0, "end": 54.0, "text": "When we implement this, would each team member have their own login?", "speaker": "Prospect"},
+    {"start": 54.0, "end": 60.0, "text": "Yes, absolutely. And the pricing is based on seats.", "speaker": "Sales Rep"},
+    {"start": 60.0, "end": 65.0, "text": "For 50 users, you'd be looking at the enterprise plan.", "speaker": "Sales Rep"},
+    {"start": 65.0, "end": 68.0, "text": "What does that cost?", "speaker": "Prospect"},
+    {"start": 68.0, "end": 74.0, "text": "The enterprise plan is $25 per user per month.", "speaker": "Sales Rep"},
+    {"start": 74.0, "end": 82.0, "text": "That's within our budget. I need to check with our VP of Operations though, she's the one who signs off on tools like this.", "speaker": "Prospect"},
+    {"start": 82.0, "end": 88.0, "text": "Of course. Should we schedule a follow-up with her included?", "speaker": "Sales Rep"},
+    {"start": 88.0, "end": 94.0, "text": "That would be great. Let me look at my calendar. How about next Tuesday?", "speaker": "Prospect"},
+    {"start": 94.0, "end": 102.0, "text": "Perfect. I'll send over a proposal document and we can walk through it together with your VP.", "speaker": "Sales Rep"},
+    {"start": 102.0, "end": 110.0, "text": "One thing though, we're also looking at Asana and Monday.com. How do you compare?", "speaker": "Prospect"},
+    {"start": 110.0, "end": 118.0, "text": "Great question. Our key differentiator is the automation engine. Let me show you a quick demo of that.", "speaker": "Sales Rep"},
+    {"start": 118.0, "end": 126.0, "text": "This is impressive. I think our team would really benefit from this.", "speaker": "Prospect"},
+    {"start": 126.0, "end": 132.0, "text": "Let me get back to you after I talk to my VP.", "speaker": "Prospect"}
+  ]
+}

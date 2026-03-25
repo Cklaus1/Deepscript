@@ -1,0 +1,20 @@
+Extract all key decisions made in this transcript. For each decision, identify:
+- What was decided
+- Who made or announced the decision
+- Any context or reasoning mentioned
+
+Only include explicit decisions, not suggestions or proposals that weren't agreed upon.
+
+Respond with ONLY a JSON array:
+[
+  {{
+    "text": "description of the decision",
+    "speaker": "who announced it",
+    "context": "brief reasoning or null"
+  }}
+]
+
+Return an empty array [] if no decisions were made.
+
+TRANSCRIPT:
+{transcript}

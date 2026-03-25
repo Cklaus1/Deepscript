@@ -1,0 +1,22 @@
+Extract all action items from this transcript. For each action item, identify:
+- The action to be taken
+- Who is responsible (assignee), if mentioned
+- The deadline, if mentioned
+- The speaker who stated the action item
+
+Only include concrete, actionable tasks — not vague intentions.
+
+Respond with ONLY a JSON array:
+[
+  {{
+    "text": "description of the action item",
+    "assignee": "person name or null",
+    "deadline": "deadline text or null",
+    "speaker": "who said it"
+  }}
+]
+
+Return an empty array [] if no action items are found.
+
+TRANSCRIPT:
+{transcript}

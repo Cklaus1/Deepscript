@@ -1,0 +1,46 @@
+Analyze this Quarterly Business Review (QBR) call transcript.
+
+Evaluate:
+1. **Customer Health**: Overall account health signals
+2. **Expansion Signals**: Upsell/cross-sell opportunities
+3. **Churn Risk**: Warning signs of potential churn
+4. **Value Realization**: Is the customer getting ROI from the product?
+5. **Stakeholder Engagement**: Who attended, who's engaged, who's missing?
+
+Respond with ONLY a JSON object:
+{{
+  "health_score": {{
+    "score": 0,
+    "max": 10,
+    "trend": "improving|stable|declining",
+    "assessment": "one sentence summary"
+  }},
+  "expansion_signals": [
+    {{"signal": "description", "quote": "supporting quote", "opportunity": "what could be sold"}}
+  ],
+  "churn_risk": {{
+    "level": "low|medium|high",
+    "indicators": [
+      {{"indicator": "description", "quote": "supporting quote", "severity": "high|medium|low"}}
+    ]
+  }},
+  "value_realization": {{
+    "roi_mentioned": true,
+    "metrics_discussed": ["metric 1"],
+    "gaps": ["unmet expectation"],
+    "assessment": "strong|moderate|weak|unclear"
+  }},
+  "stakeholder_changes": {{
+    "new_stakeholders": ["name"],
+    "missing_stakeholders": ["name"],
+    "champion_status": "strong|weakening|lost|new"
+  }},
+  "renewal_outlook": {{
+    "likelihood": "high|medium|low",
+    "contract_mentions": "any contract/renewal timeline mentions",
+    "blockers": ["blocker 1"]
+  }}
+}}
+
+TRANSCRIPT:
+{transcript}

@@ -1,0 +1,56 @@
+# DeepScript configuration
+# See PRD-deepscript.md section 9 for full schema
+
+# Classification
+classify: true
+# custom_classifications:
+#   board-meeting:
+#     keywords: [board, directors, governance, fiduciary, resolution, quorum]
+
+# Topic segmentation
+topics:
+  enabled: true
+  method: hybrid            # rule | llm | hybrid
+  min_duration: 60
+  index: true
+
+# Communication insights (rule-based, free)
+communication:
+  enabled: true
+  speaking_balance: true
+  engagement: true
+
+# Business meeting analysis
+business:
+  summary: true
+  action_items: true
+  decisions: true
+  questions: true
+
+# Sales call analysis
+sales:
+  enabled: true
+  methodology: meddic       # meddic | bant | spin | challenger
+  competitors: []
+  close_coaching: true
+  phase_detection: true
+
+# Customer discovery analysis
+discovery:
+  enabled: true
+  framework: mom_test        # mom_test | jtbd | problem_solution
+  pain_extraction: true
+  insight_mapping: true
+
+# LLM configuration
+llm:
+  provider: claude           # claude | openai | ollama | vllm | sglang | nim | none
+  model: claude-sonnet-4-6
+  redact_names: false
+  budget_per_month: 50.00
+  cost_tracking: true
+
+# Output
+output:
+  format: markdown           # markdown | json
+  sections: all              # all | [summary, actions, communication]

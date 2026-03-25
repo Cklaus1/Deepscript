@@ -1,0 +1,9 @@
+Write a concise summary of this meeting transcript. Focus on:
+1. The main purpose of the meeting
+2. Key topics discussed
+3. Important outcomes or conclusions
+
+Keep it to 2-4 sentences. Be specific, not generic.
+
+TRANSCRIPT:
+{transcript}

@@ -1,0 +1,32 @@
+Analyze this {edu_type} session.
+
+Evaluate based on session type:
+
+**For classroom/lecture:**
+- Key concepts covered
+- Student engagement (questions asked, participation)
+- Pacing (too fast, too slow, just right)
+- Comprehension checks (did the instructor verify understanding?)
+- Study notes and terminology
+
+**For coaching:**
+- GROW model tracking (Goal, Reality, Options, Will)
+- Commitment follow-through from previous sessions
+- Insight moments (breakthroughs)
+- Self-awareness indicators
+- Action items for next session
+
+Respond with ONLY a JSON object:
+{{
+  "session_type": "{edu_type}",
+  "concepts": [{{"concept": "name", "depth": "introduced|explained|practiced", "comprehension": "verified|assumed|unclear"}}],
+  "engagement": {{"questions_asked": 0, "participation_level": "high|medium|low", "energy_topics": ["topic that generated most discussion"]}},
+  "pacing": "appropriate|too_fast|too_slow",
+  "key_takeaways": ["takeaway 1"],
+  "action_items": [{{"text": "action", "owner": "who"}}],
+  "terminology": [{{"term": "word", "definition": "brief definition"}}],
+  "assessment": "one sentence summary"
+}}
+
+TRANSCRIPT:
+{transcript}

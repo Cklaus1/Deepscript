@@ -1,0 +1,25 @@
+Analyze this {call_type} transcript comprehensively. Return ALL sections in a single JSON response.
+
+{type_specific_instructions}
+
+Respond with ONLY a JSON object containing these sections:
+
+{{
+  "summary": "2-4 sentence abstractive summary of the meeting/call",
+  "action_items": [
+    {{"text": "action description", "assignee": "person or null", "deadline": "deadline or null", "speaker": "who stated it"}}
+  ],
+  "decisions": [
+    {{"text": "what was decided", "speaker": "who announced it", "context": "reasoning or null"}}
+  ],
+  "questions": [
+    {{"text": "the question", "speaker": "who asked", "answered": true}}
+  ],
+  {type_specific_schema}
+}}
+
+Only include sections with actual content. Omit sections with no findings.
+Be specific — cite quotes and timestamps from the transcript.
+
+TRANSCRIPT:
+{transcript}

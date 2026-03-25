@@ -1,0 +1,25 @@
+You are evaluating the quality of an LLM's transcript classification response.
+
+The LLM was asked to classify a call transcript and provide reasoning. You must judge the QUALITY of the classification and reasoning on a 1-10 scale.
+
+Scoring criteria:
+- **Specificity (0-3)**: Does the reasoning cite specific evidence from the transcript (quotes, pricing, names, events)? Or is it generic ("contains sales language")?
+- **Understanding (0-3)**: Does it demonstrate genuine understanding of the conversation dynamics, roles, and context? Or is it keyword-matching?
+- **Correctness (0-2)**: Is the classification reasonable for this transcript?
+- **Completeness (0-2)**: Does it capture the key characteristics, or miss important aspects?
+
+TRANSCRIPT EXCERPT (first 500 words):
+{transcript_excerpt}
+
+MODEL'S RESPONSE:
+{model_response}
+
+Respond with ONLY a JSON object:
+{{
+  "score": 0,
+  "specificity": 0,
+  "understanding": 0,
+  "correctness": 0,
+  "completeness": 0,
+  "reasoning": "one sentence explaining your score"
+}}

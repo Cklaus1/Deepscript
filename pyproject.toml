@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=82.0.1", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepscript"
+version = "0.1.0"
+description = "Transcript Intelligence Engine — classification, insights, and analysis for call transcripts"
+authors = [
+    {name = "DeepScript Team"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "typer>=0.24.1",
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
+    "pydantic>=2.12.5",
+]
+
+[project.optional-dependencies]
+llm = [
+    "anthropic>=0.52.0",
+]
+dev = [
+    "pytest>=9.0.2",
+    "black>=26.3.1",
+    "isort>=8.0.1",
+    "mypy>=1.19.1",
+]
+
+[project.scripts]
+deepscript = "deepscript.cli.main:app"
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.setuptools.packages.find]
+where = ["."]

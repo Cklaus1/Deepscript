@@ -1,0 +1,38 @@
+Analyze this sales call for buying signals, risk signals, and next steps quality.
+
+BUYING SIGNALS to detect:
+- Ownership language ("when we implement...", "our team would...")
+- Implementation questions ("how would we integrate...", "what's the setup process...")
+- Multi-threading (mentioning other stakeholders who should be involved)
+- Timeline specificity ("we need this by Q2", "our contract renews in...")
+- Budget confirmation or ROI discussion
+
+RISK SIGNALS to detect:
+- Stall language ("we need to think about it", "let me get back to you")
+- Competitor mentions and comparisons
+- Vague next steps ("I'll follow up", "let's touch base")
+- Missing stakeholders ("I'd need to check with...")
+- Price objections or budget concerns
+
+Respond with ONLY a JSON object:
+{{
+  "buying_signals": [
+    {{"signal": "description", "quote": "exact quote", "timestamp_hint": "approximate time context", "strength": "strong|moderate|weak"}}
+  ],
+  "risk_signals": [
+    {{"signal": "description", "quote": "exact quote", "timestamp_hint": "approximate time context", "severity": "high|medium|low"}}
+  ],
+  "next_steps": {{
+    "quality": "specific|vague|none",
+    "items": ["next step 1", "next step 2"],
+    "has_date": true,
+    "has_owner": true,
+    "assessment": "one sentence evaluation"
+  }},
+  "call_phases": [
+    {{"phase": "Intro|Discovery|Demo|Objections|Pricing|Close|Other", "start_hint": "context", "summary": "what happened"}}
+  ]
+}}
+
+TRANSCRIPT:
+{transcript}

@@ -1,0 +1,22 @@
+Classify this transcript into one of these call types:
+
+- business-meeting: Internal team meetings, reviews, standups, all-hands
+- sales-call: Sales demos, negotiations, pricing discussions
+- sales-discovery: Initial sales qualification, MEDDIC/BANT qualification
+- discovery-call: Customer discovery, problem interviews, user research
+- investor-pitch: Pitch meetings with investors
+- interview-behavioral: Job interviews focused on behavioral questions
+- interview-technical: Technical interviews, coding assessments
+- one-on-one: Manager/report 1:1s
+- customer-onboarding: Customer setup/training calls
+- qbr: Quarterly business reviews with customers
+- support-escalation: Customer support calls
+- standup: Daily standups, sprint ceremonies
+- voice-memo: Single-speaker notes to self
+- unknown: Cannot determine type
+
+Respond with ONLY a JSON object:
+{{"call_type": "the-type", "confidence": 0.0-1.0, "reasoning": "brief explanation"}}
+
+TRANSCRIPT:
+{transcript}

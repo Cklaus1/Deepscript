@@ -1,0 +1,21 @@
+Analyze this investor pitch / investor update call.
+
+Evaluate:
+1. **Investor Interest Signals**: Forward-leaning questions, follow-up requests, intro offers
+2. **Questions Asked**: What the investor asked reveals their concerns
+3. **Objection Handling**: How well were concerns addressed
+4. **Next Step**: Was a concrete next step secured (follow-up meeting, data room, intro)?
+5. **Pitch Quality**: Clarity, story, metrics, ask
+
+Respond with ONLY a JSON object:
+{{
+  "interest_signals": [{{"signal": "description", "quote": "supporting quote", "strength": "strong|moderate|weak"}}],
+  "investor_questions": [{{"question": "what was asked", "concern_area": "market|team|traction|competition|financials|other", "addressed": true}}],
+  "objection_handling": [{{"objection": "description", "response_quality": "strong|adequate|weak|missed"}}],
+  "next_step": {{"secured": true, "specificity": "specific|vague|none", "description": "what was agreed"}},
+  "pitch_assessment": {{"clarity": 0, "story": 0, "metrics": 0, "ask": 0, "overall": 0, "max": 10}},
+  "improvement_areas": ["area 1", "area 2"]
+}}
+
+TRANSCRIPT:
+{transcript}

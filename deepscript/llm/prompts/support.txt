@@ -1,0 +1,41 @@
+Analyze this customer support call transcript.
+
+Evaluate:
+1. **Issue Classification**: What type of issue (bug, feature request, billing, how-to, outage)?
+2. **Emotion Trajectory**: How did customer emotion change over the call (frustrated → satisfied, calm → angry)?
+3. **Resolution**: Was the issue resolved? Fully, partially, or escalated?
+4. **Empathy Score**: How well did the support agent demonstrate empathy?
+5. **Response Quality**: Were responses helpful, accurate, and timely?
+
+Respond with ONLY a JSON object:
+{{
+  "issue": {{
+    "type": "bug|feature_request|billing|how_to|outage|other",
+    "summary": "one sentence description",
+    "severity": "critical|high|medium|low",
+    "product_area": "area of the product affected"
+  }},
+  "emotion_trajectory": {{
+    "start": "frustrated|angry|calm|confused|neutral",
+    "end": "satisfied|neutral|frustrated|angry",
+    "arc": "description of emotional progression",
+    "escalation_moments": ["moment 1"]
+  }},
+  "resolution": {{
+    "status": "resolved|partial|escalated|unresolved",
+    "solution": "what was the resolution",
+    "follow_up_needed": true
+  }},
+  "empathy_score": {{
+    "score": 0,
+    "max": 10,
+    "positive_examples": ["empathetic statement"],
+    "missed_opportunities": ["moment where empathy could have helped"]
+  }},
+  "action_items": [
+    {{"text": "action item", "owner": "agent|customer|engineering", "priority": "high|medium|low"}}
+  ]
+}}
+
+TRANSCRIPT:
+{transcript}

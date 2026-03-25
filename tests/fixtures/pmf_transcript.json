@@ -1,0 +1,20 @@
+{
+  "text": "Thanks for taking the time to chat with us today. We're really curious about how things are going with the platform. Of course, happy to share. So we've been using it for about 4 months now. Honestly, our team loves the dashboard. Every Monday our team starts with the dashboard to review the week ahead. It's become part of our process. That's great to hear. How central is it to your workflow? Very central. We've built our reporting process around it. Our ops team uses it daily and we've integrated it with our Slack notifications. If it went away tomorrow, I think people would be pretty upset. Would you say you'd be very disappointed, somewhat disappointed, or not disappointed if you could no longer use it? Very disappointed, definitely. We've tried going back to spreadsheets for one week when there was a downtime, and it was painful. Have you recommended it to anyone? I mentioned it to Sarah on the ops team at another company. She seemed interested but I haven't followed up. Are there features you wish we had? Yeah, if you could add export to PDF, that would be great. And better filtering. But honestly the core product is solid. We still use the spreadsheet for deep-dive analysis though, because the analytics aren't quite deep enough yet. How about the pricing? The pricing is fair. I haven't really thought about it much, which is probably a good sign. We're definitely getting value from it.",
+  "language": "en",
+  "segments": [
+    {"start": 0.0, "end": 8.0, "text": "Thanks for taking the time to chat with us today. We're really curious about how things are going with the platform.", "speaker": "Interviewer"},
+    {"start": 8.0, "end": 18.0, "text": "Of course, happy to share. So we've been using it for about 4 months now. Honestly, our team loves the dashboard.", "speaker": "Customer"},
+    {"start": 18.0, "end": 28.0, "text": "Every Monday our team starts with the dashboard to review the week ahead. It's become part of our process.", "speaker": "Customer"},
+    {"start": 28.0, "end": 33.0, "text": "That's great to hear. How central is it to your workflow?", "speaker": "Interviewer"},
+    {"start": 33.0, "end": 48.0, "text": "Very central. We've built our reporting process around it. Our ops team uses it daily and we've integrated it with our Slack notifications.", "speaker": "Customer"},
+    {"start": 48.0, "end": 55.0, "text": "If it went away tomorrow, I think people would be pretty upset.", "speaker": "Customer"},
+    {"start": 55.0, "end": 65.0, "text": "Would you say you'd be very disappointed, somewhat disappointed, or not disappointed if you could no longer use it?", "speaker": "Interviewer"},
+    {"start": 65.0, "end": 78.0, "text": "Very disappointed, definitely. We've tried going back to spreadsheets for one week when there was a downtime, and it was painful.", "speaker": "Customer"},
+    {"start": 78.0, "end": 82.0, "text": "Have you recommended it to anyone?", "speaker": "Interviewer"},
+    {"start": 82.0, "end": 92.0, "text": "I mentioned it to Sarah on the ops team at another company. She seemed interested but I haven't followed up.", "speaker": "Customer"},
+    {"start": 92.0, "end": 96.0, "text": "Are there features you wish we had?", "speaker": "Interviewer"},
+    {"start": 96.0, "end": 112.0, "text": "Yeah, if you could add export to PDF, that would be great. And better filtering. But honestly the core product is solid. We still use the spreadsheet for deep-dive analysis though, because the analytics aren't quite deep enough yet.", "speaker": "Customer"},
+    {"start": 112.0, "end": 116.0, "text": "How about the pricing?", "speaker": "Interviewer"},
+    {"start": 116.0, "end": 126.0, "text": "The pricing is fair. I haven't really thought about it much, which is probably a good sign. We're definitely getting value from it.", "speaker": "Customer"}
+  ]
+}

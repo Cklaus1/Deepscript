@@ -1,0 +1,42 @@
+Analyze this {cs_type} customer call.
+
+Evaluate based on call type:
+
+**For onboarding:**
+- Progress milestones (what stage are they at?)
+- Confusion points (where did the customer get stuck?)
+- Risk flags (signs they may not succeed)
+- Time-to-value tracking
+
+**For churn save:**
+- True churn reason (not the polite version)
+- Save likelihood
+- Concession effectiveness (did offers work?)
+- Competitor they're switching to
+
+**For renewal/expansion:**
+- Renewal likelihood
+- Expansion opportunities
+- Stakeholder changes
+- Champion status
+
+**For vendor evaluation:**
+- Requirement coverage score
+- Pricing comparison mentions
+- Risk flags
+- Decision criteria
+
+Respond with ONLY a JSON object:
+{{
+  "call_type": "{cs_type}",
+  "health_indicators": [{{"indicator": "description", "sentiment": "positive|negative|neutral"}}],
+  "risk_flags": [{{"risk": "description", "severity": "high|medium|low"}}],
+  "opportunities": [{{"opportunity": "description", "likelihood": "high|medium|low"}}],
+  "milestones": [{{"milestone": "description", "status": "completed|in_progress|blocked"}}],
+  "key_findings": ["finding 1"],
+  "next_steps": [{{"step": "description", "owner": "who"}}],
+  "assessment": "one sentence summary"
+}}
+
+TRANSCRIPT:
+{transcript}

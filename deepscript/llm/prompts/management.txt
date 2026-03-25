@@ -1,0 +1,36 @@
+Analyze this {management_type} meeting.
+
+Evaluate based on meeting type:
+
+**For 1:1s:**
+- Topic coverage balance (career development vs status updates vs blockers)
+- Coaching quality (asking vs telling, empowerment vs directive)
+- Engagement signals (both parties contributing)
+- Blocker tracking (identified + resolved?)
+- Burnout indicators
+
+**For cofounder alignment:**
+- Vision alignment (agreement on direction)
+- Decision dynamics (balanced or one-sided)
+- Conflict patterns (healthy debate vs tension)
+- Role clarity
+- Power balance
+
+**For advisory/board:**
+- Advice quality and actionability
+- Intro/connection offers (easily forgotten!)
+- Governance compliance
+- Help requests made
+
+Respond with ONLY a JSON object:
+{{
+  "meeting_type": "{management_type}",
+  "topic_coverage": [{{"topic": "name", "category": "career|status|blocker|strategic|tactical", "depth": "deep|surface|mentioned"}}],
+  "dynamics": {{"balance": "balanced|one-sided", "coaching_vs_directing": "coaching|directing|mixed", "engagement": "high|medium|low"}},
+  "key_items": [{{"item": "description", "type": "advice|decision|blocker|intro|action", "owner": "who"}}],
+  "concerns": ["concern 1"],
+  "assessment": "one sentence overall assessment"
+}}
+
+TRANSCRIPT:
+{transcript}

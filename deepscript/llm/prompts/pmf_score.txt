@@ -1,0 +1,42 @@
+Analyze this customer call for Product-Market Fit signals using the Sean Ellis / Rahul Vohra framework.
+
+Score each dimension 0-10 with specific evidence from the transcript:
+
+1. **Emotional Intensity**: How strongly does the customer feel about the product? (unprompted enthusiasm, specific praise vs generic "it's nice")
+2. **Workflow Integration**: How deeply is the product embedded in their daily work? (central vs peripheral, number of workflows mentioned)
+3. **Referral / Evangelism**: Have they told others about the product? (specific referrals vs vague "I mentioned it")
+4. **Switching Cost**: How hard would it be to stop using the product? ("built around it" vs "could easily switch")
+5. **Feature Request Quality**: Are requests incremental (extend existing) or fundamental (missing core value)?
+6. **Willingness to Pay**: Are there unsolicited ROI statements, price acceptance, or expansion asks?
+7. **Urgency**: Is there timeline pressure, expansion urgency, or dependency?
+8. **Unprompted Praise**: Positive statements before any question or prompt?
+
+Also determine the **Ellis Classification**:
+- "Very Disappointed" = strong PMF (would truly miss the product)
+- "Somewhat Disappointed" = approaching PMF (would miss it but could adapt)
+- "Not Disappointed" = no PMF (wouldn't miss it)
+
+Respond with ONLY a JSON object:
+{{
+  "pmf_score": 0.0,
+  "dimensions": {{
+    "emotional_intensity": {{"score": 0, "evidence": "quote or description"}},
+    "workflow_integration": {{"score": 0, "evidence": "quote or description"}},
+    "referral_evangelism": {{"score": 0, "evidence": "quote or description"}},
+    "switching_cost": {{"score": 0, "evidence": "quote or description"}},
+    "feature_request_quality": {{"score": 0, "evidence": "quote or description"}},
+    "willingness_to_pay": {{"score": 0, "evidence": "quote or description"}},
+    "urgency": {{"score": 0, "evidence": "quote or description"}},
+    "unprompted_praise": {{"score": 0, "evidence": "quote or description"}}
+  }},
+  "ellis_classification": "very_disappointed|somewhat_disappointed|not_disappointed",
+  "ellis_reasoning": "one sentence explanation",
+  "strongest_signals": ["signal 1", "signal 2"],
+  "anti_pmf_flags": ["flag 1", "flag 2"],
+  "key_quotes": [
+    {{"quote": "exact quote", "signal_type": "emotional|workflow|referral|switching|feature|wtp|urgency|praise|anti_pmf", "timestamp_hint": "context"}}
+  ]
+}}
+
+TRANSCRIPT:
+{transcript}
