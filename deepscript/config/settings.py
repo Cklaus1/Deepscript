@@ -67,6 +67,7 @@ class LLMConfig(BaseModel):
     max_tokens: int = 4096
     max_retries: int = 3  # Retry transient failures with exponential backoff
     concurrency: int = 5  # Max parallel LLM calls in async mode
+    rate_limit_rpm: int = 0  # Requests per minute (0 = use provider default)
     base_url: str | None = None  # Custom API endpoint (for ollama, vllm, sglang)
     api_key: str | None = None  # Explicit API key (overrides env var)
     redact_names: bool = False

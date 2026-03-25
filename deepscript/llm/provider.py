@@ -1,10 +1,11 @@
-"""LLM provider — Claude, OpenAI, Ollama, vLLM, SGLang, NIM. With retry + async."""
+"""LLM provider — Claude, OpenAI, Ollama, vLLM, SGLang, NIM. With retry + async + rate limiting."""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -15,6 +16,49 @@ from deepscript.llm.cost_tracker import CostTracker
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+# Rate limits per provider (requests per minute)
+PROVIDER_RATE_LIMITS = {
+    "nim": 35,       # NIM free tier ~40, stay under
+    "ollama": 0,     # Local — no limit
+    "vllm": 0,       # Local — no limit
+    "sglang": 0,     # Local — no limit
+    "claude": 0,     # Handled by Anthropic SDK
+    "openai": 0,     # Handled by OpenAI SDK
+    "none": 0,
+}
+
+
+class _RateLimiter:
+    """Thread-safe rate limiter. Shared per provider."""
+
+    def __init__(self, requests_per_minute: int) -> None:
+        self.interval = 60.0 / requests_per_minute if requests_per_minute > 0 else 0
+        self._lock = threading.Lock()
+        self._last_request = 0.0
+
+    def wait(self) -> None:
+        if self.interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request
+            if elapsed < self.interval:
+                time.sleep(self.interval - elapsed)
+            self._last_request = time.monotonic()
+
+
+# One rate limiter per provider — shared across all LLMProvider instances
+_limiters: dict[str, _RateLimiter] = {}
+_limiters_lock = threading.Lock()
+
+
+def _get_limiter(provider: str) -> _RateLimiter:
+    with _limiters_lock:
+        if provider not in _limiters:
+            rpm = PROVIDER_RATE_LIMITS.get(provider, 0)
+            _limiters[provider] = _RateLimiter(rpm)
+        return _limiters[provider]
 
 LOCAL_BASE_URLS = {
     "ollama": "http://localhost:11434/v1",
@@ -52,6 +96,10 @@ class LLMProvider:
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
         self.cost_tracker = CostTracker(budget_limit=config.budget_per_month)
+        # Override provider default rate limit if config specifies one
+        if config.rate_limit_rpm > 0:
+            with _limiters_lock:
+                _limiters[config.provider] = _RateLimiter(config.rate_limit_rpm)
         self._client: Any = None
         self._async_client: Any = None
 
@@ -149,6 +197,7 @@ class LLMProvider:
         last_error: Exception | None = None
 
         for attempt in range(max_retries):
+            _get_limiter(self.config.provider).wait()
             try:
                 client = self._get_client()
                 start = time.monotonic()
@@ -203,6 +252,8 @@ class LLMProvider:
 
         max_retries = self.config.max_retries
         for attempt in range(max_retries):
+            # Rate limit (run in thread to not block event loop)
+            await asyncio.to_thread(_get_limiter(self.config.provider).wait)
             try:
                 client = self._get_async_client()
                 start = time.monotonic()
