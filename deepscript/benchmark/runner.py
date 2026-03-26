@@ -169,8 +169,11 @@ def _load_test_transcript() -> tuple[str, str]:
     return "This is a test transcript for benchmarking.", ""
 
 
-def _load_all_test_transcripts() -> list[tuple[str, str]]:
+def _load_all_test_transcripts(max_words: int = 500) -> list[tuple[str, str]]:
     """Load ALL test transcripts for multi-fixture benchmarking.
+
+    Args:
+        max_words: Max words per transcript (default 500 — enough for classify, saves tokens).
 
     Returns: list of (transcript_text, fixture_name).
     """
@@ -190,10 +193,10 @@ def _load_all_test_transcripts() -> list[tuple[str, str]]:
             with open(fp) as f:
                 data = json.load(f)
             text = data.get("text", "")
-            # Truncate very long transcripts for cost control
+            # Truncate for cost and context window control
             words = text.split()
-            if len(words) > 3000:
-                text = " ".join(words[:3000]) + "\n[...truncated...]"
+            if len(words) > max_words:
+                text = " ".join(words[:max_words]) + "\n[...truncated...]"
             result.append((text, name))
     return result
 
@@ -482,7 +485,10 @@ def run_benchmark(
     for clean latency measurements). Set parallel=False for sequential.
     """
     task_names = tasks or list(BENCHMARK_TASKS.keys())
-    transcripts = _load_all_test_transcripts()
+
+    # Use shorter transcripts for classify-only benchmarks
+    max_words = 500 if task_names == ["classify"] else 1500
+    transcripts = _load_all_test_transcripts(max_words=max_words)
     if not transcripts:
         transcripts = [_load_test_transcript()]
 
@@ -490,26 +496,65 @@ def run_benchmark(
     global _rate_limiter
     _rate_limiter = RateLimiter(rate_limit_rpm)
     total_calls = len(models) * len(task_names) * len(transcripts)
-    est_minutes = total_calls / rate_limit_rpm
-    logger.info("Benchmarking %d models × %d tasks × %d transcripts = %d calls (~%.0f min at %d req/min)",
-                len(models), len(task_names), len(transcripts), total_calls, est_minutes, rate_limit_rpm)
+    est_minutes = max(total_calls / rate_limit_rpm, total_calls * 2 / 60)  # account for response time
+    logger.info("Benchmarking %d models × %d tasks × %d transcripts = %d calls (~%.0f min)",
+                len(models), len(task_names), len(transcripts), total_calls, est_minutes)
+
+    # Incremental results file — updated after each model completes
+    incremental_path = BENCHMARK_DIR / "benchmark-latest.json"
+    BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
+    benchmarks: list[ModelBenchmark] = []
+
+    def _on_model_done(bench: ModelBenchmark) -> None:
+        """Save results incrementally after each model."""
+        benchmarks.append(bench)
+        _save_incremental(benchmarks, incremental_path)
+        status = f"Q={bench.avg_quality:.1f}" if bench.avg_quality > 0 else "FAIL"
+        logger.info("  ✓ %s: %s (%d/%d models done)",
+                     bench.model, status, len(benchmarks), len(models))
 
     if parallel and len(models) > 1:
-        benchmarks = _run_parallel(
+        _run_parallel(
             models, provider, task_names, transcripts,
-            base_url, api_key, max_tokens, max_parallel,
+            base_url, api_key, max_tokens, max_parallel, _on_model_done,
         )
     else:
-        benchmarks = [
-            _benchmark_single_model(
+        for m in models:
+            bench = _benchmark_single_model(
                 m, provider, task_names, transcripts,
                 base_url, api_key, max_tokens, _rate_limiter,
             )
-            for m in models
-        ]
+            _on_model_done(bench)
 
     benchmarks.sort(key=lambda b: b.avg_quality, reverse=True)
     return benchmarks
+
+
+def _save_incremental(benchmarks: list[ModelBenchmark], path: Path) -> None:
+    """Save current results incrementally (called after each model)."""
+    sorted_benchmarks = sorted(benchmarks, key=lambda b: b.avg_quality, reverse=True)
+    data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "models_tested": len(sorted_benchmarks),
+        "in_progress": True,
+        "results": [
+            {
+                "model": b.model,
+                "provider": b.provider,
+                "tier": b.tier,
+                "avg_quality": b.avg_quality,
+                "avg_latency_ms": b.avg_latency_ms,
+                "total_cost_usd": b.total_cost_usd,
+                "success_rate": b.success_rate,
+                "avg_accuracy_f1": b.avg_accuracy_f1,
+                "avg_grounding_rate": b.avg_grounding_rate,
+                "tasks": [asdict(r) for r in b.results],
+            }
+            for b in sorted_benchmarks
+        ],
+    }
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, default=str)
 
 
 def _run_parallel(
@@ -521,14 +566,13 @@ def _run_parallel(
     api_key: str | None,
     max_tokens: int,
     max_parallel: int,
-) -> list[ModelBenchmark]:
+    on_done: Any = None,
+) -> None:
     """Benchmark models in parallel using asyncio + thread pool."""
     import asyncio
 
-    async def run_all() -> list[ModelBenchmark]:
+    async def run_all() -> None:
         sem = asyncio.Semaphore(max_parallel)
-        results: list[ModelBenchmark] = []
-        lock = asyncio.Lock()
 
         async def bench_one(model_id: str) -> None:
             async with sem:
@@ -537,14 +581,13 @@ def _run_parallel(
                     model_id, provider, task_names, transcripts,
                     base_url, api_key, max_tokens, _rate_limiter,
                 )
-            async with lock:
-                results.append(bench)
+            if on_done:
+                on_done(bench)
 
         gather_tasks = [bench_one(m) for m in models]
         await asyncio.gather(*gather_tasks, return_exceptions=True)
-        return results
 
-    return asyncio.run(run_all())
+    asyncio.run(run_all())
 
 
 def save_benchmark_results(benchmarks: list[ModelBenchmark]) -> Path:
