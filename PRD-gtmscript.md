@@ -443,7 +443,214 @@ Worst performing: "product-demo-invite" (4% reply rate)
 
 ---
 
-## 8. CLI Commands
+## 8. Outreach Sequences (Intelligence-Driven)
+
+Not spray-and-pray. Every message is informed by what you know about the prospect.
+
+### Message Templates
+
+Templates live in `templates/` directory as markdown files with YAML frontmatter:
+
+```markdown
+---
+name: discovery-pain-v2
+channel: linkedin  # linkedin | email
+stage: cold        # Which pipeline stage this is for
+icp: all           # Or specific ICP name
+step: 1            # Position in sequence (1 = first touch)
+subject: null      # For email only
+---
+
+Hey {first_name},
+
+I've been talking to {role_plural} at {industry} companies your size and keep hearing the same thing — {pain_signal}.
+
+Curious if that's something your team deals with too, or if you've solved it?
+
+{sender_first_name}
+```
+
+Variables auto-populated from company + ICP data:
+- `{first_name}`, `{company}`, `{role}` — from contact
+- `{pain_signal}` — from ICP definition or company pain map
+- `{industry}`, `{size}` — from company firmographics
+- `{mutual_connection}` — from referral tracking
+- `{case_study}` — best matching customer story by industry/size
+- `{sender_first_name}` — from config
+
+### Sequences (Multi-Step)
+
+```yaml
+# sequences/discovery-linkedin.yaml
+sequence:
+  name: "Discovery — LinkedIn"
+  channel: linkedin
+  icp: "Series A SaaS Ops Teams"
+  stages: [cold]  # Only run on companies in these stages
+
+  steps:
+    - step: 1
+      template: "linkedin-connect-v2"
+      delay_days: 0  # Send immediately
+      action: connect  # connect | message | inmail
+
+    - step: 2
+      template: "pain-question-v1"
+      delay_days: 3  # 3 days after step 1
+      action: message
+      skip_if: replied  # Don't send if they already replied
+
+    - step: 3
+      template: "case-study-share-v1"
+      delay_days: 7
+      action: message
+      skip_if: replied
+
+    - step: 4
+      template: "meeting-ask-v1"
+      delay_days: 5
+      action: message
+      skip_if: replied
+
+  on_reply: pause  # pause | notify | advance_stage
+  on_connect_accept: advance_to_step_2
+  max_attempts: 4
+```
+
+### How It Works
+
+**Not automated sending.** GTMScript drafts, you review and send.
+
+```bash
+# Generate today's outreach batch
+gtmscript outreach today
+
+# Output:
+# 📤 Ready to send (12 messages):
+#
+# STEP 1 — LinkedIn Connect (5 new):
+#   1. Sarah Chen @ Acme Corp
+#      Template: linkedin-connect-v2
+#      Message: "Hey Sarah, I've been talking to VP Ops at SaaS companies
+#               your size and keep hearing about spreadsheet chaos..."
+#      [Send] [Edit] [Skip] [Snooze 3d]
+#
+#   2. Bob Kim @ Globex Inc
+#      ...
+#
+# STEP 2 — Pain Question (4 follow-ups, 3 days since connect):
+#   3. Jane Lee @ Initech (connected, no reply yet)
+#      Template: pain-question-v1
+#      ...
+#
+# STEP 3 — Case Study (3 follow-ups, 7 days since pain question):
+#   ...
+
+# Send a specific message (via ms365-cli or copy to clipboard)
+gtmscript outreach send 1 --via ms365    # Send email via ms365-cli
+gtmscript outreach send 1 --copy         # Copy to clipboard for LinkedIn
+
+# Mark a reply received (auto-pauses sequence)
+gtmscript outreach replied "Acme Corp"
+
+# Skip a prospect (with reason)
+gtmscript outreach skip "Globex Inc" --reason "left company"
+```
+
+### LLM-Enhanced Personalization
+
+When LLM is available, GTMScript goes beyond variable substitution:
+
+```bash
+# Generate a personalized message using LLM + company intel
+gtmscript outreach draft "Acme Corp" --channel email --step 1
+
+# LLM sees:
+# - ICP: "Series A SaaS Ops Teams"
+# - Company: 50 employees, SaaS, San Francisco
+# - Contact: Sarah Chen, VP Operations
+# - Referred by: Jane Advisor
+# - No calls yet (cold)
+#
+# Generates:
+# Subject: Jane suggested I reach out
+#
+# Hi Sarah,
+#
+# Jane [Advisor] mentioned you're running ops for a 50-person
+# team at Acme. She thought we should connect because...
+```
+
+For companies with prior calls (re-engagement):
+
+```bash
+gtmscript outreach draft "Acme Corp" --type re-engage
+
+# LLM sees:
+# - Last call: 3 weeks ago, discussed spreadsheet pain
+# - Pain map: "Monday reporting breaks", "new hire onboarding"
+# - Last action item: "Send integration docs" (not done)
+# - Ghost detection: 14 days no response
+#
+# Generates:
+# Hi Sarah,
+#
+# I realized I never sent over those integration docs we discussed
+# on our last call. Attached — the Slack + Jira setup takes about
+# 10 minutes.
+#
+# Also, I know Monday mornings are rough for your team's reporting.
+# We shipped a one-click export last week that might help. Worth
+# a quick look?
+```
+
+### Template Performance Tracking
+
+Every send is tracked. Templates are scored over time:
+
+```bash
+gtmscript outreach stats
+
+# Template Performance (last 30 days):
+#
+# | Template | Sent | Replied | Rate | Avg Days | Status |
+# |----------|------|---------|------|----------|--------|
+# | pain-focused-v2 | 45 | 13 | 29% | 4.2 | ✅ Active |
+# | case-study-saas | 30 | 8 | 27% | 5.1 | ✅ Active |
+# | linkedin-connect-v2 | 60 | 18 | 30% | 2.8 | ✅ Active |
+# | product-demo-invite | 50 | 2 | 4% | — | ⚠️ Retire? |
+# | cold-intro-v1 | 25 | 1 | 4% | — | ❌ Retired |
+#
+# Recommendation: Retire "product-demo-invite" (4% after 50 sends)
+# Best performer: "linkedin-connect-v2" (30% reply rate)
+```
+
+Auto-retirement threshold: if a template has <5% reply rate after 30+ sends, GTMScript flags it for retirement and suggests alternatives.
+
+### A/B Testing
+
+```yaml
+# sequences/discovery-email.yaml
+steps:
+  - step: 1
+    ab_test:
+      a: "pain-focused-v2"    # 50% get this
+      b: "social-proof-v1"    # 50% get this
+    min_sample: 25             # Need 25 sends per variant before declaring winner
+    auto_promote: true         # Winner becomes default
+```
+
+After sufficient sample:
+```
+A/B Test Results — Step 1:
+  A: pain-focused-v2   — 28% reply rate (14/50)
+  B: social-proof-v1   — 19% reply rate (9/48)
+  Winner: A (+47% relative) — auto-promoted ✅
+```
+
+---
+
+## 9. CLI Commands
 
 ```bash
 # Company management
@@ -477,7 +684,16 @@ gtmscript competitors asana            # Asana-specific win/loss
 gtmscript email-intel "Acme Corp"     # Analyze email thread
 gtmscript ghosts                       # Show ghost prospects
 gtmscript ghosts --re-engage          # Draft re-engagement emails
-gtmscript outreach-stats               # Channel + template performance
+
+# Outreach sequences
+gtmscript outreach today               # Show today's outreach batch (draft, don't send)
+gtmscript outreach draft "Acme Corp" --channel linkedin --step 1  # LLM-personalized draft
+gtmscript outreach draft "Acme Corp" --type re-engage             # Re-engagement draft
+gtmscript outreach send 1 --via ms365  # Send via ms365-cli
+gtmscript outreach send 1 --copy       # Copy to clipboard for LinkedIn
+gtmscript outreach replied "Acme Corp" # Mark reply received (pauses sequence)
+gtmscript outreach skip "Globex" --reason "left company"
+gtmscript outreach stats               # Template performance + A/B test results
 
 # ICP management
 gtmscript icp define --name "Series A SaaS"
@@ -503,7 +719,7 @@ gtmscript export salesforce --format csv
 
 ---
 
-## 9. Config (.gtmscript.yaml)
+## 10. Config (.gtmscript.yaml)
 
 ```yaml
 # ICP
@@ -554,11 +770,23 @@ pmf:
 revenue:
   default_pricing_per_seat: 25  # $/user/month for ARR estimation
   currency: "USD"
+
+# Outreach sequences
+outreach:
+  enabled: true
+  templates_dir: "templates/"
+  sequences_dir: "sequences/"
+  auto_retire_threshold: 0.05   # Retire templates below 5% reply rate
+  auto_retire_min_sends: 30     # After this many sends
+  ab_test_min_sample: 25        # Per variant before declaring winner
+  default_channel: "linkedin"   # linkedin | email
+  llm_personalization: true     # Use LLM to personalize beyond variables
+  send_mode: "draft"            # draft (review first) | auto (dangerous)
 ```
 
 ---
 
-## 10. Integration Points
+## 11. Integration Points
 
 ### With DeepScript
 
@@ -612,7 +840,7 @@ metadata:
 
 ---
 
-## 11. Cross-Project Architecture
+## 12. Cross-Project Architecture
 
 ```
 /root/projects/
@@ -637,8 +865,14 @@ metadata:
 │   │   ├── calendar.py        # Meeting context
 │   │   ├── minotes.py         # MiNotes page read/write
 │   │   └── export.py          # HubSpot/Salesforce export
+│   ├── outreach/
+│   │   ├── templates.py       # Template loading + variable substitution
+│   │   ├── sequences.py       # Multi-step sequence management
+│   │   ├── drafts.py          # LLM-personalized message generation
+│   │   ├── tracker.py         # Send/reply tracking + performance stats
+│   │   └── ab_test.py         # A/B test management + auto-promote
 │   ├── generators/
-│   │   ├── follow_up.py       # Draft follow-up emails
+│   │   ├── follow_up.py       # Draft follow-up emails from call intel
 │   │   ├── call_prep.py       # Call prep from all intelligence
 │   │   └── re_engage.py       # Ghost re-engagement drafts
 │   ├── cli/
@@ -657,7 +891,7 @@ metadata:
 
 ---
 
-## 12. Build Priority
+## 13. Build Priority
 
 ### Phase 1 — Foundation (v0.1)
 1. Company CRUD + MiNotes page generation
@@ -665,20 +899,24 @@ metadata:
 3. Pipeline stages + manual stage movement
 4. DeepScript linking (manual `--company` flag)
 5. Ghost detection (email last-reply tracking)
+6. Message template library + `outreach draft` command
 
 ### Phase 2 — Intelligence (v0.2)
-6. Auto-linking (speaker ID → calendar → email proximity → prompt)
-7. Pain map aggregation (cross-call dedup + ranking)
-8. PMF dashboard (cross-company Ellis + Vohra segmentation)
-9. Deal health scoring + MEDDIC aggregation
-10. Follow-up email generation
+7. Auto-linking (speaker ID → calendar → email proximity → prompt)
+8. Pain map aggregation (cross-call dedup + ranking)
+9. PMF dashboard (cross-company Ellis + Vohra segmentation)
+10. Deal health scoring + MEDDIC aggregation
+11. Follow-up email generation
+12. LLM-personalized outreach drafts (company intel → message)
+13. Multi-step sequences with auto-pause on reply
 
 ### Phase 3 — Scale (v0.3)
-11. Competitive intelligence aggregation
-12. Outreach analytics (channel + template performance)
-13. Call prep generation
-14. CRM export (HubSpot/Salesforce CSV)
-15. BFlow skill + MCP server
+14. Competitive intelligence aggregation
+15. Template performance tracking + auto-retire
+16. A/B testing for outreach templates
+17. Call prep generation
+18. CRM export (HubSpot/Salesforce CSV)
+19. BFlow skill + MCP server
 
 ### Phase 4 — Team (v1.0, post-hire)
 16. Rep coaching (talk metrics, methodology compliance, benchmarks)
@@ -688,7 +926,7 @@ metadata:
 
 ---
 
-## 13. Why This Beats HubSpot for Pre-PMF
+## 14. Why This Beats HubSpot for Pre-PMF
 
 | Dimension | HubSpot | GTMScript |
 |-----------|---------|-----------|
@@ -703,6 +941,8 @@ metadata:
 | **AI/LLM** | Limited | 7 providers, local models, benchmarked |
 | **Dead post-mortem** | Optional field | Required reason + learnings |
 | **Outreach tracking** | Built-in sequences | Channel + template analytics |
+| **Outreach quality** | Same template to 500 people | LLM-personalized per company intel |
+| **Outreach learning** | Manual A/B testing | Auto-retire losers, auto-promote winners |
 | **Setup time** | Days | Minutes |
 
 **When to switch to HubSpot:** When you have 3+ reps, need email sequences at scale, and are past PMF. `gtmscript export hubspot` gets you there.
