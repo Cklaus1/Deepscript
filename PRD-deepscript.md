@@ -1155,3 +1155,150 @@ BFlow's scheduler can trigger DeepScript to scan for and analyze new transcripts
 ```
 
 **`--new-only`** checks the processing manifest (same pattern as AudioScript) to skip already-analyzed files. Combined with `--calendar` and `--notify`, a single scheduled command handles the full pipeline.
+
+---
+
+## 11. LLM Provider System
+
+DeepScript supports 7 LLM providers with a unified interface:
+
+| Provider | Auth | Local | Default Model |
+|----------|------|-------|---------------|
+| `claude` | `ANTHROPIC_API_KEY` | No | claude-sonnet-4-6 |
+| `openai` | `OPENAI_API_KEY` | No | gpt-4 |
+| `ollama` | None | Yes | llama3.1 |
+| `vllm` | None | Yes | configurable |
+| `sglang` | None | Yes | configurable |
+| `nim` | `NVIDIA_API_KEY` | No | qwen/qwen3-next-80b-a3b-instruct |
+| `none` | — | — | Rule-based only |
+
+### Features
+- **Retry with exponential backoff** — 3 retries on transient errors (429, 5xx, network)
+- **Async support** — `complete_async()` for parallel batch processing
+- **Rate limiting** — Per-provider limits (NIM: 35 req/min), thread-safe
+- **Budget enforcement** — Stops LLM calls when monthly budget exceeded
+- **Cost tracking** — Per-call token/cost tracking, persistent to `~/.deepscript/usage.jsonl`
+- **Combined analysis prompts** — 1 LLM call per transcript instead of 3-5
+- **Prompt template caching** — Templates loaded from disk once, reused
+- **.env auto-loading** — API keys loaded from `.env` file automatically
+
+### NIM Model Benchmarking
+
+Built-in benchmark system for evaluating NIM models:
+
+```bash
+deepscript benchmark --list                    # List 159 NIM models
+deepscript benchmark -p nim --top 10           # Benchmark top 10
+deepscript benchmark --history                 # Past runs
+deepscript benchmark --trend "model-name"      # Quality trend + stddev
+deepscript benchmark --compare "1,2"           # Compare two runs
+```
+
+**Benchmark methodology:**
+- Multi-fixture: 7 transcripts per model (synthetic + real AudioScript recordings)
+- Ground truth with accepted alternative classifications
+- Hallucination detection (verify extracted items against transcript)
+- Precision/recall vs annotated correct answers
+- Rate-limited (35 req/min for NIM free tier)
+- Incremental saving (results per model, not all-at-end)
+- Parallel execution with `asyncio.to_thread()`
+
+**3-Panel Expert Judge:**
+- Sales Ops Leader — signal accuracy, actionability, evidence quality
+- UX Researcher — conversation dynamics, pain extraction, methodology awareness
+- Conversation Linguist — discourse understanding, speaker attribution, semantic accuracy
+- Decimal scoring (7.3, not 7) for fine-grained differentiation
+
+**Benchmark results (93 NIM models tested):**
+- Best quality: qwen/qwen3-next-80b-a3b-instruct (7.5/10 expert, 2.3s)
+- Best speed/quality: moonshotai/kimi-k2-instruct (7.2/10, 1.8s)
+- Fastest: meta/llama-3.1-8b-instruct (8.3/10 auto, 486ms)
+
+---
+
+## 12. Cross-Call Speaker Intelligence
+
+DeepScript identifies speakers across multiple calls by combining evidence from multiple sources:
+
+| Source | Signal | Confidence |
+|--------|--------|-----------|
+| AudioScript voice embedding | Same voice = same person | 0.95+ |
+| AudioScript LLM name extraction | "Chris addresses as 'Kim'" | 0.85 |
+| Calendar event attendees | Meeting with "Kim Anderson" | 0.80 |
+| Contact list match | "Kim" → "Kim Anderson, Anderson Law" | 0.75 |
+| Email thread participants | Emailed "Adam" about this meeting | 0.70 |
+| Cross-call topic analysis | Voice always discusses estate planning | 0.50 |
+| Co-speaker patterns | Voice always appears with Chris | 0.40 |
+
+### Progressive Naming
+Names upgrade over time as confidence increases:
+- ≥0.80: Full name, no qualifier ("Adam Fuller")
+- 0.60-0.79: "Adam (likely)"
+- 0.40-0.59: "Adam (possible)"
+- <0.40: Not written
+
+### Speaker DB Writeback
+Writes identified names back to AudioScript's `speaker_identities.json`:
+- Never downgrades — only upgrades with more specific or higher confidence
+- Versioned `name_history` with timestamps, sources, evidence, call count
+- Conflict detection — flags when evidence points to different people
+- Aliases tracked (first names, previous names, professional vs personal)
+- Preserves AudioScript-confirmed names
+
+### MiNotes Contact Pages
+Generates one MiNotes page per identified speaker:
+- YAML frontmatter (cluster_id, name, role, calls, confidence, contact metadata)
+- Call history table with types, titles, durations
+- Topics discussed across all calls
+- Action items assigned to this person
+- Co-speaker relationship map with wiki-links
+- Name history audit trail
+
+### CLI
+```bash
+deepscript speakers identify -t ./transcripts/ --writeback    # Identify + write back
+deepscript speakers list -t ./transcripts/                     # List all speakers
+deepscript speakers profile "Adam" -t ./transcripts/           # View one profile
+deepscript speakers pages -t ./transcripts/ CRM/Contacts       # Generate MiNotes pages
+```
+
+---
+
+## 13. Chunk-Aware Analysis
+
+When AudioScript chunks long recordings (>80K chars) into ~30-minute segments, DeepScript:
+
+- Detects chunked transcripts (`llm_analysis.chunked == true`)
+- Uses pre-analyzed chunk topics as topic segments (no re-segmentation)
+- Merges chunk action items into analysis (deduplicated)
+- Uses AudioScript's LLM classification for chunked calls
+- Includes `chunk_metadata` in output (count, titles, duration)
+
+Treats chunks as topic segments within ONE call, not separate calls. Avoids wasting LLM tokens re-analyzing what AudioScript already processed.
+
+---
+
+## 14. Batch Processing & Performance
+
+### Parallel Processing
+```bash
+deepscript analyze ./transcripts/ -r --parallel --concurrency 10
+```
+
+- `asyncio.to_thread()` runs sync analysis in thread pool
+- `asyncio.Semaphore` bounds concurrent files
+- Rate limiter shared across all threads
+- Rich progress bar in TTY mode (silent in JSON output)
+
+### Processing Manifest
+- SHA-256 hash + mtime/size caching for fast change detection
+- `--new-only` skips already-analyzed files
+- `--force` re-analyzes everything
+- Atomic save (PID+UUID temp file + rename)
+- Keyboard interrupt saves progress
+
+### Auto-Discovery Analyzer Registry
+- `analyzers/__init__.py` auto-discovers all `BaseAnalyzer` subclasses
+- Adding a new analyzer = create one file with `supported_types`
+- No edits to analyze.py or classifier.py needed
+- Classifier merges keywords from analyzer `classification_keywords` class attributes
