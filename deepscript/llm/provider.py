@@ -95,6 +95,9 @@ class LLMProvider:
 
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
+        # Use nim_model when provider is nim and model is the default claude model
+        if config.provider == "nim" and config.model == "claude-sonnet-4-6":
+            self.config = config.model_copy(update={"model": config.nim_model})
         self.cost_tracker = CostTracker(budget_limit=config.budget_per_month)
         # Override provider default rate limit if config specifies one
         if config.rate_limit_rpm > 0:

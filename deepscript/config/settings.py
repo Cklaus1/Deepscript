@@ -64,6 +64,13 @@ class TopicsConfig(BaseModel):
 class LLMConfig(BaseModel):
     provider: str = "claude"  # LLM-first; falls back to rule-based if no API key
     model: str = "claude-sonnet-4-6"
+    # NIM recommended models (benchmarked 93 models × 7 transcripts × 3-panel expert judge):
+    #   1. moonshotai/kimi-k2-instruct      — 7.2/10 expert, 1.8s (best quality)
+    #   2. moonshotai/kimi-k2-instruct-0905  — 7.1/10 expert, 1.1s (best speed/quality)
+    #   3. qwen/qwen3.5-122b-a10b           — 7.0/10 expert (best reasoning depth)
+    #   4. qwen/qwen3-coder-480b             — 7.0/10 expert, 1.4s (highest auto score)
+    #   5. ai21labs/jamba-1.5-mini-instruct  — 6.9/10 expert, 1.2s (best value)
+    nim_model: str = "moonshotai/kimi-k2-instruct"
     max_tokens: int = 4096
     max_retries: int = 3  # Retry transient failures with exponential backoff
     concurrency: int = 5  # Max parallel LLM calls in async mode
