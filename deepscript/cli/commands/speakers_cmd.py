@@ -168,5 +168,50 @@ def speakers(
                     print(f"  ? {p.cluster_id:<25} {p.total_calls} calls  {topics}")
                 if len(unnamed) > 10:
                     print(f"  ... +{len(unnamed)-10} more")
+    elif action == "pages":
+        if not transcripts:
+            cli_ctx.console.print("[red]--transcripts required[/red]")
+            raise typer.Exit(1)
+
+        db_path = speaker_db
+        if not db_path:
+            candidate = Path(transcripts) / "speaker_identities.json"
+            if candidate.exists():
+                db_path = str(candidate)
+
+        profiles = identify_speakers(
+            transcript_dir=transcripts,
+            speaker_db_path=db_path,
+            calendar_provider=calendar,
+            contacts_provider=contacts,
+        )
+
+        from deepscript.integrations.minotes import generate_contact_pages, generate_contacts_summary
+
+        output_dir = name_or_id or "CRM/Contacts"
+        analysis_dir = None
+        for cd in [Path("analysis-output"), Path(transcripts).parent / "analysis-output"]:
+            if cd.exists():
+                analysis_dir = str(cd)
+                break
+
+        pages = generate_contact_pages(
+            profiles, transcripts,
+            analysis_dir=analysis_dir,
+            output_dir=output_dir,
+            speaker_db_path=db_path,
+            min_calls=2,
+        )
+
+        index = generate_contacts_summary(profiles, output_dir)
+        index_path = Path(output_dir) / "_Index.md"
+        with open(index_path, "w") as f:
+            f.write(index)
+        pages.append(index_path)
+
+        cli_ctx.console.print(f"[green]Generated {len(pages)} contact pages in {output_dir}/[/green]")
+        if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET):
+            emit({"pages": [str(p) for p in pages], "count": len(pages), "output_dir": output_dir}, cli_ctx)
+
     else:
-        cli_ctx.console.print(f"[red]Unknown action: {action}. Use: identify | profile | list[/red]")
+        cli_ctx.console.print(f"[red]Unknown action: {action}. Use: identify | profile | list | pages[/red]")
