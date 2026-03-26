@@ -1,6 +1,6 @@
 # GTMScript — Go-To-Market Intelligence Engine
 
-**Version:** 0.1 (Concept)
+**Version:** 0.2 (Revised)
 **Date:** 2026-03-26
 **Status:** Proposal
 **Relationship:** Separate package. AudioScript transcribes → DeepScript analyzes → GTMScript tracks pipeline + deals + PMF.
@@ -14,7 +14,7 @@
 | Input | Any transcript | DeepScript analyses, emails, CRM data |
 | Output | Structured intelligence per call | Pipeline state, deal health, PMF dashboard, coaching |
 | State | Stateless (analyze and forget) | Stateful (tracks companies, deals, contacts over time) |
-| Entity model | None (just transcripts) | Companies, Contacts, Deals, ICPs |
+| Entity model | None (just transcripts) | Companies, Contacts, ICPs |
 | Time horizon | Single call | Months of relationship across many calls |
 | Core value | "What happened in this call?" | "Is this deal going to close? Is this our PMF segment?" |
 
@@ -31,22 +31,42 @@ pip install audioscript[deepscript,gtm]    # Full pipeline
 AudioScript                DeepScript                 GTMScript
 ┌──────────┐             ┌──────────────┐          ┌───────────────────┐
 │ Record   │──transcript→│ Classify     │─analysis→│ Link to Company   │
-│ Transcribe│   (JSON)   │ Analyze      │  (JSON)  │ Update Deal State │
+│ Transcribe│   (JSON)   │ Analyze      │  (JSON)  │ Update Pipeline   │
 │          │             │ Score        │          │ Track PMF         │
-└──────────┘             └──────────────┘          │ Coach Rep         │
-                                                   │ Generate Follow-up│
-Email (ms365/gws)──────────────────────────────────│ Ghost Detection   │
-                                                   │ Pipeline View     │
+└──────────┘             └──────────────┘          │ Generate Follow-up│
+                                                   │ Ghost Detection   │
+Email (ms365/gws)──────────────────────────────────│ Email Intel       │
 Calendar (ms365/gws)───────────────────────────────│ Meeting Context   │
                                                    └───────────────────┘
                                                           ↓
-                                                   MiNotes (UI layer)
-                                                   BTask CMS (memory)
+                                                   MiNotes (source of truth)
+                                                   BTask CMS (index/compute)
 ```
 
 ---
 
-## 2. Entity Model
+## 2. Data Storage: Source of Truth
+
+**MiNotes is primary. CMS is index.**
+
+Each company = a MiNotes page with YAML frontmatter. GTMScript reads and writes MiNotes pages AND maintains a JSON index in BTask CMS for fast queries. The index is derived from MiNotes, not the other way around.
+
+```
+MiNotes/CRM/                          BTask CMS store/
+├── ICP Definition.md                  ├── gtm/
+├── Targets/                           │   ├── index.json (derived from MiNotes)
+│   ├── Acme Corp.md                   │   ├── pipeline_state.json
+│   ├── Globex Inc.md                  │   └── analytics/
+│   └── ...                            │       ├── pmf_dashboard.json
+├── Pipeline Dashboard.md              │       └── competitive_intel.json
+└── PMF Dashboard.md                   └── episodes/ (DeepScript analyses)
+```
+
+If there's a conflict, MiNotes wins. The CMS index is rebuilt from MiNotes pages on `gtmscript sync`.
+
+---
+
+## 3. Entity Model
 
 ### ICP (Ideal Customer Profile)
 
@@ -63,14 +83,14 @@ icp:
   target_count: 1000
 ```
 
-### Company
+### Company (Primary Entity — v1 merges Deal into Company)
 
 ```yaml
 company:
   id: "comp_acme123"
   name: "Acme Corp"
   icp_match: "Series A SaaS Ops Teams"
-  icp_score: 0.85  # How well they match ICP criteria
+  icp_score: 0.85
 
   # Firmographics
   size: 50
@@ -79,10 +99,25 @@ company:
   location: "San Francisco"
 
   # Relationship state
-  stage: "validation"  # cold → outreach → discovery → validation → pilot → loi → deal → customer | dead
+  stage: "validation"  # cold → outreach → discovery → validation → pilot → negotiation → loi → deal → customer | dead
   stage_changed_at: "2026-03-20"
   first_contact: "2026-02-15"
   last_contact: "2026-03-25"
+
+  # Dead tracking (only when stage=dead)
+  dead_reason: null  # no_pain | bad_timing | competitor | budget | no_champion | ghosted | not_icp
+  dead_notes: ""
+  reactivate_date: null  # "2026-Q3" — when to check back
+
+  # Referral tracking
+  referred_by: "Jane Advisor"
+  referral_source: "advisor"  # advisor | investor | customer | conference | inbound | cold
+
+  # Revenue estimate
+  estimated_arr: 12000  # Rough: size × pricing tier, updated as pricing discussed
+  deal_probability: 0.45  # Computed from signals
+  deal_timeline: "Q2 2026"
+  deal_decision_process: "VP Ops recommends → CEO approves"
 
   # Contacts
   contacts:
@@ -102,22 +137,36 @@ company:
       sentiment: "neutral"
       last_spoke: "2026-03-10"
 
+  # Outreach tracking
+  outreach_attempts:
+    - date: "2026-02-15"
+      channel: "linkedin"
+      message_template: "pain-focused-v2"
+      response: false
+    - date: "2026-02-22"
+      channel: "email"
+      message_template: "case-study-share"
+      response: true
+      days_to_response: 7
+
   # Intelligence (auto-populated from DeepScript)
   pain_map:
     - pain: "Spreadsheet-based reporting breaks every Monday"
       severity: "high"
       frequency: "weekly"
       source: "call_2026-03-15"
+      confirmed_in: ["call_2026-03-20", "call_2026-03-25"]
       workaround: "Manual copy-paste from 3 tools"
 
     - pain: "New hires take 3 weeks to learn the reporting process"
       severity: "medium"
+      frequency: "per hire"
       source: "call_2026-03-20"
 
   pmf_signals:
     current_score: 6.8
     ellis_classification: "somewhat_disappointed"
-    trend: [4.2, 5.5, 6.8]  # Across 3 product calls
+    trend: [4.2, 5.5, 6.8]
     strongest: "workflow integration"
     blocker: "still using spreadsheets for deep analysis"
 
@@ -127,24 +176,35 @@ company:
       strength: "strong"
     - signal: "Mentioned Q2 budget cycle"
       call: "call_2026-03-20"
+      strength: "moderate"
 
   risk_signals:
     - signal: "CEO hasn't been on a call yet"
       severity: "high"
-    - signal: "Mentioned evaluating 2 competitors"
+      type: "missing_stakeholder"
+    - signal: "Evaluating Asana and Monday.com"
       severity: "medium"
+      type: "competitor"
 
-  # Deal
-  deal:
-    value: null  # Unknown until pricing discussed
-    timeline: "Q2 2026"
-    decision_process: "VP Ops recommends → CEO approves"
-    competitors: ["Asana", "Monday.com"]
-    next_step: "Schedule demo with CEO"
-    next_step_date: "2026-03-28"
-    next_step_owner: "us"
+  competitors: ["Asana", "Monday.com"]
 
-  # Calls
+  # MEDDIC (aggregated across all calls)
+  meddic:
+    metrics: 2        # "Save 20 hours/week"
+    economic_buyer: 1  # CEO identified but not engaged
+    decision_criteria: 2
+    decision_process: 2
+    identify_pain: 3
+    champion: 3
+    total: 13
+    max: 18
+    gaps: ["Economic buyer not engaged"]
+
+  next_step: "Schedule demo with CEO"
+  next_step_date: "2026-03-28"
+  next_step_owner: "us"  # us | them
+
+  # Calls (linked from DeepScript)
   calls:
     - id: "call_2026-03-15"
       type: "discovery-call"
@@ -174,64 +234,22 @@ company:
     score: 7.2
     factors:
       champion_identified: true
-      decision_maker_engaged: false  # CEO hasn't been on a call
+      decision_maker_engaged: false
       pain_confirmed: true
       timeline_exists: true
       budget_discussed: true
       competitors_active: true
-      multi_threaded: false  # Only talking to Sarah
+      multi_threaded: false
       next_step_specific: true
     risks: ["No CEO engagement", "Competitor evaluation active"]
     recommendation: "Get CEO on next call. Prepare competitive battlecard for Asana."
 ```
 
-### Deal
-
-```yaml
-deal:
-  id: "deal_acme_q2"
-  company: "comp_acme123"
-  stage: "validation"
-  value: null
-  probability: 0.45  # Computed from signals
-  expected_close: "2026-06"
-  owner: "founder"
-
-  # MEDDIC across all calls (aggregated)
-  meddic:
-    metrics: 2      # Mentioned "save 20 hours/week"
-    economic_buyer: 1  # CEO identified but not engaged
-    decision_criteria: 2  # Integration + pricing discussed
-    decision_process: 2  # VP recommends → CEO approves
-    identify_pain: 3    # Strong pain confirmed in 2 calls
-    champion: 3         # Sarah actively pushing internally
-    total: 13/18
-    gaps: ["Economic buyer not engaged"]
-
-  # Timeline
-  events:
-    - date: "2026-02-15"
-      type: "outreach"
-      note: "Cold LinkedIn message to Sarah"
-    - date: "2026-03-01"
-      type: "reply"
-      note: "Sarah responded, interested"
-    - date: "2026-03-15"
-      type: "discovery-call"
-      duration: 30
-      outcome: "Pain confirmed, agreed to demo"
-    - date: "2026-03-25"
-      type: "demo"
-      duration: 45
-      outcome: "Positive, needs CEO buy-in"
-    - date: "2026-03-28"
-      type: "scheduled"
-      note: "Demo with CEO"
-```
+**Note:** No separate Deal entity in v1. Company IS the deal. Split Deal out in v2 when you have enterprise accounts with multiple opportunities.
 
 ---
 
-## 3. Pipeline Stages
+## 4. Pipeline Stages
 
 ```
 cold              Not yet contacted. In target list.
@@ -242,7 +260,7 @@ pilot             Using product (trial/POC).
 negotiation       Pricing/terms discussion.
 loi               Letter of intent or verbal commit.
 deal              Signed. Customer.
-dead              Not a fit. Documented why.
+dead              Not a fit. Documented why (dead_reason required).
 ```
 
 ### Stage Transition Rules
@@ -256,11 +274,43 @@ dead              Not a fit. Documented why.
 | pilot → negotiation | Pricing discussed on call | DeepScript buying signals |
 | negotiation → loi | Verbal commit or LOI signed | Manual |
 | loi → deal | Contract signed | Manual |
-| any → dead | No response 30 days, or explicit "not interested" | Ghost detection / DeepScript |
+| any → dead | No response 30 days, explicit "not interested", or manual | Ghost detection / DeepScript / manual |
+
+**Dead requires a reason.** `gtmscript company move "Acme" --stage dead --reason competitor --notes "Chose Asana, liked their Jira integration"`
 
 ---
 
-## 4. Cross-Call Intelligence
+## 5. Auto-Linking (How Analyses Connect to Companies)
+
+When DeepScript produces an analysis, GTMScript needs to know which company it belongs to. Matching priority:
+
+1. **Explicit flag** (highest confidence):
+   ```bash
+   deepscript analyze call.json --company "Acme Corp"
+   ```
+
+2. **Speaker cluster ID** — If AudioScript's speaker DB maps `spk_381a53e4` to a contact, and that contact belongs to Acme Corp, auto-link.
+
+3. **Calendar event** — If the call timestamp matches a calendar meeting titled "Acme Demo" (±30 min window), link to Acme.
+
+4. **Email proximity** — If there's an email thread with an Acme contact within 24 hours of the call, likely related.
+
+5. **Prompt user** — If no match found:
+   ```
+   Could not auto-link call_2026-03-25.json
+   Speakers: spk_381a53e4, spk_58cddeaf
+   Time: 2026-03-25 15:00 (50 min)
+
+   Possible matches:
+     1. Acme Corp (Sarah Chen spoke 3 days ago)
+     2. Globex Inc (meeting scheduled today)
+     3. [New company]
+     4. [Skip]
+   ```
+
+---
+
+## 6. Cross-Call Intelligence
 
 ### Pain Map (Aggregated Across Calls)
 
@@ -321,9 +371,26 @@ Feature Priority:
 | Mobile app | 0% | 60% | ❌ No |
 ```
 
+### Competitive Intelligence (Aggregated Across All Companies)
+
+```markdown
+## Competitive Landscape — From 50 Active Deals
+
+| Competitor | Mentioned In | Win Rate | Top Objection | Best Counter |
+|-----------|-------------|----------|---------------|-------------|
+| Asana | 12/50 (24%) | 40% | "Cheaper" | Automation engine demo |
+| Monday.com | 8/50 (16%) | 25% | "Brand recognition" | Migration support offer |
+| Spreadsheets | 30/50 (60%) | 80% | "Free" | "20 hrs/week saved" ROI calc |
+
+### Trends
+- Asana mentions ↑ 30% this quarter
+- Monday.com mentions stable
+- "Build in-house" down 50% (good — they're buying not building)
+```
+
 ---
 
-## 5. Email Intelligence
+## 7. Email Intelligence
 
 ### Ghost Detection
 
@@ -331,7 +398,7 @@ Feature Priority:
 ghost_detection:
   warning_days: 7    # Yellow flag after 7 days no response
   critical_days: 14  # Red flag after 14 days
-  dead_days: 30      # Auto-move to dead after 30 days
+  dead_days: 30      # Auto-move to dead after 30 days (with reason=ghosted)
   check_source: ms365  # ms365 | google
 ```
 
@@ -345,7 +412,6 @@ Monitor email threads with prospects:
 
 Run DeepScript on email threads:
 ```bash
-# Fetch emails with a prospect and analyze
 gtmscript email-intel "Acme Corp"
 ```
 
@@ -355,52 +421,43 @@ Extracts:
 - CC/forwarding patterns (are they multi-threading internally? good sign)
 - Attachment patterns (sent a proposal = high intent)
 
----
+### Outreach Analytics
 
-## 6. Rep Coaching (For When You Hire Reps)
-
-Track per-rep metrics across all their calls:
+```bash
+gtmscript outreach-stats
+```
 
 ```markdown
-## Rep: Sarah (SDR)
+## Outreach Performance
 
-### Talk Metrics (last 30 days, 45 calls)
-- Talk ratio: 62% (target: 40-55%) ⚠️ Talking too much
-- Questions per call: 6 avg (target: 11-14) ⚠️ Not asking enough
-- Longest monologue: 3.2 min avg (target: <90s) ⚠️ Monologuing
-- Filler words: 8 per call (target: <5)
+| Channel | Sent | Replied | Rate | Avg Days to Reply |
+|---------|------|---------|------|-------------------|
+| LinkedIn | 120 | 24 | 20% | 5.2 days |
+| Cold email | 200 | 18 | 9% | 8.1 days |
+| Warm intro | 30 | 22 | 73% | 1.4 days |
+| Conference | 15 | 9 | 60% | 3.0 days |
 
-### Methodology Compliance
-- MEDDIC avg: 9/18 (target: 14+)
-- Weakest: Economic Buyer (0.8/3) — not identifying who signs
-- Strongest: Identify Pain (2.5/3)
-
-### Deal Outcomes
-- Calls to close: 4.2 avg
-- Win rate: 28% (team avg: 32%)
-- Biggest gap: Deals stall at "validation" — not converting to pilot
-
-### Coaching Suggestions
-1. "You're averaging 6 questions per call. Top performers ask 12. Try preparing 5 open-ended questions before each call."
-2. "Your monologues average 3.2 minutes. Prospects check out after 90 seconds. Practice the 'pause and ask' technique."
-3. "You identify pain well (2.5/3) but don't ask about the economic buyer (0.8/3). Add 'Who signs off on tools like this?' to your call script."
+Best performing template: "pain-focused-v2" (28% reply rate)
+Worst performing: "product-demo-invite" (4% reply rate)
 ```
 
 ---
 
-## 7. CLI Commands
+## 8. CLI Commands
 
 ```bash
 # Company management
 gtmscript company add "Acme Corp" --icp "Series A SaaS" --size 50 --industry SaaS
+gtmscript company add "Acme Corp" --referred-by "Jane Advisor" --source advisor
 gtmscript company list --stage discovery
 gtmscript company view "Acme Corp"
 gtmscript company move "Acme Corp" --stage validation
+gtmscript company move "Acme Corp" --stage dead --reason competitor --notes "Chose Asana"
 
 # Link DeepScript analysis to company
 gtmscript link call.analysis.json --company "Acme Corp"
 
-# Auto-link (match by speaker, calendar, or email)
+# Auto-link (match by speaker, calendar, or email — prompts on ambiguity)
 gtmscript auto-link ./analyses/
 
 # Pipeline
@@ -412,87 +469,37 @@ gtmscript pipeline --health red       # At-risk deals
 gtmscript pmf                         # Cross-company PMF
 gtmscript pmf --segment "20-50 employees"
 
+# Competitive intelligence
+gtmscript competitors                  # Cross-deal competitive view
+gtmscript competitors asana            # Asana-specific win/loss
+
 # Email intelligence
 gtmscript email-intel "Acme Corp"     # Analyze email thread
 gtmscript ghosts                       # Show ghost prospects
 gtmscript ghosts --re-engage          # Draft re-engagement emails
+gtmscript outreach-stats               # Channel + template performance
 
 # ICP management
 gtmscript icp define --name "Series A SaaS"
-gtmscript icp import targets.csv      # Bulk import
+gtmscript icp import targets.csv      # Bulk import (CSV → MiNotes pages)
 gtmscript icp score                    # Score companies against ICP
 
-# Rep coaching (when you have reps)
-gtmscript coaching "Sarah"            # Rep performance report
-gtmscript coaching --team             # Team benchmarks
-
 # Deal intelligence
-gtmscript deal "Acme Corp"            # Deal health + MEDDIC
+gtmscript deal "Acme Corp"            # Health + MEDDIC + timeline
 gtmscript deal risks                  # All at-risk deals
-gtmscript deal forecast               # Pipeline forecast
+gtmscript deal forecast               # Weighted pipeline forecast
 
 # Follow-up generation
-gtmscript follow-up "Acme Corp"       # Draft follow-up email
+gtmscript follow-up "Acme Corp"       # Draft follow-up email from last call
 gtmscript prep "Acme Corp"            # Call prep from all intelligence
+
+# Sync
+gtmscript sync                        # Rebuild CMS index from MiNotes pages
+
+# Export (when you outgrow GTMScript)
+gtmscript export hubspot --format csv  # Companies → Accounts, Contacts, Deals
+gtmscript export salesforce --format csv
 ```
-
----
-
-## 8. Data Storage
-
-### Option A: MiNotes (Recommended for Solo Founder)
-
-Each company = a MiNotes page with YAML frontmatter:
-```markdown
----
-type: company
-stage: validation
-icp: "Series A SaaS"
-pain_score: 8.2
-pmf_score: 6.8
-health: 7.2
-next_step: "Demo with CEO"
-next_step_date: 2026-03-28
-last_contact: 2026-03-25
-calls: 3
----
-
-# Acme Corp
-
-## Pain Map
-...
-
-## PMF Trajectory
-...
-
-## Call History
-...
-```
-
-### Option B: BTask CMS (For Programmatic Access)
-
-```
-store/
-├── companies/
-│   ├── comp_acme123.json
-│   └── comp_globex456.json
-├── deals/
-│   ├── deal_acme_q2.json
-│   └── deal_globex_pilot.json
-├── contacts/
-│   └── ...
-├── pipeline/
-│   └── pipeline_state.json
-└── analytics/
-    ├── pmf_dashboard.json
-    └── rep_coaching.json
-```
-
-### Option C: Both (MiNotes for UI, CMS for Compute)
-
-MiNotes = human-readable pages you browse and edit.
-CMS = structured JSON for programmatic queries and dashboards.
-Sync between them.
 
 ---
 
@@ -511,14 +518,16 @@ icp:
 # Pipeline
 pipeline:
   stages: [cold, outreach, discovery, validation, pilot, negotiation, loi, deal, dead]
-  auto_advance: true  # Auto-move based on signals
-  ghost_days: 30       # Days before auto-dead
+  auto_advance: true
+  ghost_days: 30
+  require_dead_reason: true
 
 # Data sources
 sources:
   deepscript:
     enabled: true
-    auto_link: true    # Auto-link analyses to companies
+    auto_link: true
+    link_priority: [explicit, speaker_id, calendar, email_proximity, prompt]
   email:
     provider: ms365    # ms365 | google
     enabled: true
@@ -529,18 +538,10 @@ sources:
 
 # Storage
 storage:
-  primary: minotes     # minotes | btask-cms | json
+  primary: minotes
   minotes_dir: "CRM/"
   cms_store: "/root/projects/BTask/packages/cms/store"
-
-# Coaching (when you have reps)
-coaching:
-  enabled: false
-  benchmarks:
-    talk_ratio: [0.40, 0.55]
-    questions_per_call: [11, 14]
-    max_monologue_seconds: 90
-    meddic_target: 14
+  sync_on_change: true
 
 # PMF tracking
 pmf:
@@ -548,6 +549,11 @@ pmf:
   ellis_threshold: 0.40
   min_companies: 10
   segment_by: [company_size, role, use_case]
+
+# Revenue
+revenue:
+  default_pricing_per_seat: 25  # $/user/month for ARR estimation
+  currency: "USD"
 ```
 
 ---
@@ -562,11 +568,13 @@ analysis = deepscript.analyze("call.json")
 
 # GTMScript links it to a company and updates state
 gtmscript.link(analysis, company="Acme Corp")
-# → Updates pain map
-# → Updates PMF score
+# → Updates pain map (dedup + rank)
+# → Updates PMF score (trend)
 # → Updates buying/risk signals
+# → Updates MEDDIC scores (aggregated)
 # → Checks if stage should advance
-# → Generates follow-up draft
+# → Updates MiNotes page
+# → Rebuilds CMS index
 ```
 
 ### With AudioScript
@@ -578,22 +586,18 @@ sync:
     enabled: true
   gtmscript:
     enabled: true
-    auto_link: true  # Try to match transcript to company by speaker/calendar
+    auto_link: true
 ```
 
 ### With ms365-cli / gwscli
 
 ```bash
-# Email monitoring
-gtmscript email-sync  # Fetch recent emails, match to companies, detect ghosts
-
-# Calendar context
-gtmscript calendar-sync  # Match upcoming meetings to companies
+gtmscript email-sync   # Fetch recent emails, match to companies, detect ghosts
+gtmscript calendar-sync # Match upcoming meetings to companies, generate prep
 ```
 
 ### With BFlow
 
-GTMScript registers as a BFlow skill:
 ```yaml
 ---
 name: gtmscript
@@ -617,38 +621,74 @@ metadata:
 ├── gtmscript/           # Intelligence → Pipeline + PMF  [NEW]
 │   ├── core/
 │   │   ├── company.py         # Company entity + CRUD
-│   │   ├── deal.py            # Deal tracking + health
-│   │   ├── pipeline.py        # Stage management
-│   │   ├── icp.py             # ICP definition + scoring
+│   │   ├── pipeline.py        # Stage management + auto-advance
+│   │   ├── icp.py             # ICP definition + scoring + import
 │   │   └── contact.py         # Contact management
 │   ├── intelligence/
-│   │   ├── pain_map.py        # Cross-call pain aggregation
+│   │   ├── pain_map.py        # Cross-call pain aggregation + dedup
 │   │   ├── pmf_tracker.py     # Per-company + cross-company PMF
-│   │   ├── deal_health.py     # Deal health scoring
+│   │   ├── deal_health.py     # Health scoring + MEDDIC aggregation
 │   │   ├── ghost_detector.py  # Email silence detection
-│   │   └── coaching.py        # Rep metrics + suggestions
+│   │   ├── competitive.py     # Cross-deal competitive intelligence
+│   │   └── outreach_stats.py  # Channel + template performance
 │   ├── integrations/
-│   │   ├── deepscript.py      # Consume DeepScript analyses
+│   │   ├── deepscript.py      # Consume DeepScript analyses + auto-link
 │   │   ├── email.py           # ms365/gws email intelligence
 │   │   ├── calendar.py        # Meeting context
-│   │   └── minotes.py         # MiNotes page generation
+│   │   ├── minotes.py         # MiNotes page read/write
+│   │   └── export.py          # HubSpot/Salesforce export
+│   ├── generators/
+│   │   ├── follow_up.py       # Draft follow-up emails
+│   │   ├── call_prep.py       # Call prep from all intelligence
+│   │   └── re_engage.py       # Ghost re-engagement drafts
 │   ├── cli/
-│   │   └── main.py            # CLI commands
+│   │   └── main.py
 │   └── config.py
 │
 ├── BTask/
 │   └── packages/
-│       ├── cms/              # Episodic memory
+│       ├── cms/              # Index + compute
 │       └── bflow/            # Orchestration
 │
 ├── ms365-cli/               # Microsoft 365
 ├── gwscli/                  # Google Workspace
-└── MiNotes/                 # Knowledge base (UI layer)
+└── MiNotes/                 # Source of truth (UI layer)
 ```
 
 ---
 
-## 12. Why This Beats HubSpot for Pre-PMF
+## 12. Build Priority
+
+### Phase 1 — Foundation (v0.1)
+1. Company CRUD + MiNotes page generation
+2. ICP definition + CSV import (bulk create 1000 company pages)
+3. Pipeline stages + manual stage movement
+4. DeepScript linking (manual `--company` flag)
+5. Ghost detection (email last-reply tracking)
+
+### Phase 2 — Intelligence (v0.2)
+6. Auto-linking (speaker ID → calendar → email proximity → prompt)
+7. Pain map aggregation (cross-call dedup + ranking)
+8. PMF dashboard (cross-company Ellis + Vohra segmentation)
+9. Deal health scoring + MEDDIC aggregation
+10. Follow-up email generation
+
+### Phase 3 — Scale (v0.3)
+11. Competitive intelligence aggregation
+12. Outreach analytics (channel + template performance)
+13. Call prep generation
+14. CRM export (HubSpot/Salesforce CSV)
+15. BFlow skill + MCP server
+
+### Phase 4 — Team (v1.0, post-hire)
+16. Rep coaching (talk metrics, methodology compliance, benchmarks)
+17. Deal forecasting (weighted pipeline)
+18. Separate Deal entity (multi-deal per company)
+19. Team dashboards
+
+---
+
+## 13. Why This Beats HubSpot for Pre-PMF
 
 | Dimension | HubSpot | GTMScript |
 |-----------|---------|-----------|
@@ -656,11 +696,13 @@ metadata:
 | **PMF tracking** | None | 8-dimension Ellis scoring, Vohra segmentation |
 | **Call intelligence** | Basic (requires Gong add-on) | Full DeepScript analysis built-in |
 | **Discovery quality** | None | Mom Test scoring, JTBD extraction |
-| **Data ownership** | Their cloud | Your machine |
+| **Pain aggregation** | Manual notes | Auto-aggregated cross-call pain map |
+| **Ghost detection** | Manual | Automatic with re-engagement drafts |
+| **Competitive intel** | Manual | Auto-aggregated from all calls |
+| **Data ownership** | Their cloud | Your machine, MiNotes pages |
 | **AI/LLM** | Limited | 7 providers, local models, benchmarked |
-| **Customization** | Config-based | Code-level, open source |
-| **Pipeline** | Feature-rich (overkill) | Minimal (right-sized for discovery) |
-| **Relationship analysis** | None | Gottman/NVC (for personal calls too) |
+| **Dead post-mortem** | Optional field | Required reason + learnings |
+| **Outreach tracking** | Built-in sequences | Channel + template analytics |
 | **Setup time** | Days | Minutes |
 
-**When to switch to HubSpot:** When you have 3+ reps, need email sequences, and are past PMF. GTMScript exports to HubSpot when you outgrow it.
+**When to switch to HubSpot:** When you have 3+ reps, need email sequences at scale, and are past PMF. `gtmscript export hubspot` gets you there.
