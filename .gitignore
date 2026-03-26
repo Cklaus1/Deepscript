@@ -24,6 +24,7 @@ Thumbs.db
 # DeepScript runtime
 .deepscript-manifest.json
 analysis-output/
+CRM/
 
 # Test/build artifacts
 .pytest_cache/
