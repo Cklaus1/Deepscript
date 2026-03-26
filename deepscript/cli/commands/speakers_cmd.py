@@ -18,6 +18,8 @@ def speakers(
     speaker_db: Optional[str] = typer.Option(None, "--speaker-db", help="AudioScript speaker_identities.json path."),
     calendar: str = typer.Option("none", "--calendar", help="Calendar provider: ms365 | google | none."),
     contacts: str = typer.Option("none", "--contacts", help="Contacts provider: ms365 | google | none."),
+    writeback: bool = typer.Option(False, "--writeback", help="Write identified names back to speaker DB."),
+    min_confidence: float = typer.Option(0.40, "--min-confidence", help="Minimum confidence for writeback."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Cross-call speaker identification and profiles."""
@@ -26,6 +28,7 @@ def speakers(
     from deepscript.core.speaker_intelligence import (
         identify_speakers,
         format_speaker_profiles,
+        writeback_to_speaker_db,
     )
 
     if action == "identify":
@@ -47,15 +50,34 @@ def speakers(
             contacts_provider=contacts,
         )
 
+        # Writeback to speaker DB if requested
+        wb_result = None
+        if writeback and db_path:
+            wb_result = writeback_to_speaker_db(profiles, db_path, min_confidence=min_confidence)
+            cli_ctx.console.print(
+                f"[green]Writeback:[/green] {wb_result['updated']} updated, "
+                f"{wb_result['skipped_confirmed']} kept (confirmed), "
+                f"{wb_result['skipped_low_confidence']} skipped (low confidence)"
+            )
+
         if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET, OutputFormat.YAML):
-            emit({
+            result = {
                 "total_clusters": len(profiles),
                 "identified": sum(1 for p in profiles.values() if p.likely_name),
                 "unidentified": sum(1 for p in profiles.values() if not p.likely_name),
                 "profiles": {cid: p.to_dict() for cid, p in profiles.items()},
-            }, cli_ctx)
+            }
+            if wb_result:
+                result["writeback"] = wb_result
+            emit(result, cli_ctx)
         else:
             print(format_speaker_profiles(profiles))
+            if wb_result and wb_result["updated"] > 0:
+                print(f"\n## Writeback Summary")
+                print(f"Updated {wb_result['updated']} names in speaker DB:")
+                for change in wb_result["details"]["updated"]:
+                    old = change["old_name"] or "unnamed"
+                    print(f"  {change['cluster_id']}: {old} → {change['new_name']} ({change['confidence']:.0%}, {change['calls']} calls)")
 
     elif action == "profile":
         if not name_or_id:

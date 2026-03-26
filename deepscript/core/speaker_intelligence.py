@@ -47,10 +47,54 @@ class SpeakerProfile:
     topics: list[str] = field(default_factory=list)
     co_speakers: dict[str, int] = field(default_factory=dict)  # cluster_id → call count
 
+    @property
+    def display_name(self) -> str:
+        """Progressive display name based on confidence.
+
+        ≥0.90 — "Adam Schwartz" (full name, no qualifier)
+        ≥0.80 — "Adam Schwartz" (confident enough, no qualifier)
+        ≥0.60 — "Adam (likely)"
+        ≥0.40 — "Adam (possible)"
+        <0.40 — cluster_id
+        """
+        if not self.likely_name:
+            return self.cluster_id
+
+        if self.name_confidence >= 0.80:
+            return self.likely_name
+        elif self.name_confidence >= 0.60:
+            return f"{self.likely_name} (likely)"
+        elif self.name_confidence >= 0.40:
+            return f"{self.likely_name} (possible)"
+        else:
+            return self.cluster_id
+
+    @property
+    def best_full_name(self) -> str | None:
+        """Return the most complete name available (prefer full names from contacts/calendar)."""
+        # Prefer names with spaces (full names) from high-confidence sources
+        full_names = [
+            e.name for e in self.evidence
+            if " " in e.name and e.confidence >= 0.70
+            and e.source in ("contacts", "calendar", "audioscript_confirmed", "speaker_db")
+        ]
+        if full_names:
+            # Pick the longest (most complete) name
+            return max(full_names, key=len)
+
+        # Fall back to any full name
+        full_names = [e.name for e in self.evidence if " " in e.name and e.confidence >= 0.60]
+        if full_names:
+            return max(full_names, key=len)
+
+        return self.likely_name
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "cluster_id": self.cluster_id,
             "likely_name": self.likely_name,
+            "display_name": self.display_name,
+            "best_full_name": self.best_full_name,
             "name_confidence": round(self.name_confidence, 3),
             "evidence": [
                 {"source": e.source, "name": e.name, "confidence": e.confidence, "detail": e.detail}
@@ -484,3 +528,131 @@ def format_speaker_profiles(profiles: dict[str, SpeakerProfile]) -> str:
             lines.append(f"- {p.cluster_id}: {p.total_calls} calls{topics_str}")
 
     return "\n".join(lines)
+
+
+# --- Speaker DB Writeback ---
+
+
+def writeback_to_speaker_db(
+    profiles: dict[str, SpeakerProfile],
+    speaker_db_path: str | Path,
+    min_confidence: float = 0.40,
+) -> dict[str, Any]:
+    """Write identified speaker names back to AudioScript's speaker_identities.json.
+
+    Progressive naming:
+    - ≥0.80: Write full name as canonical_name (e.g., "Adam Schwartz")
+    - ≥0.60: Write with qualifier (e.g., "Adam (likely)")
+    - ≥0.40: Write with qualifier (e.g., "Adam (possible)")
+    - <0.40: Don't write — not confident enough
+
+    Never overwrites AudioScript-confirmed names. Uses "deepscript_inferred" status.
+
+    Returns: summary of changes made.
+    """
+    path = Path(speaker_db_path)
+    if not path.exists():
+        logger.warning("Speaker DB not found: %s", path)
+        return {"error": "file not found"}
+
+    with open(path) as f:
+        db = json.load(f)
+
+    identities = db.get("identities", {})
+    changes = {"updated": [], "skipped_confirmed": [], "skipped_low_confidence": [], "not_in_db": []}
+
+    for cid, profile in profiles.items():
+        if not profile.likely_name or profile.name_confidence < min_confidence:
+            if profile.likely_name:
+                changes["skipped_low_confidence"].append({
+                    "cluster_id": cid,
+                    "name": profile.likely_name,
+                    "confidence": profile.name_confidence,
+                })
+            continue
+
+        if cid not in identities:
+            changes["not_in_db"].append(cid)
+            continue
+
+        identity = identities[cid]
+
+        # Don't overwrite AudioScript-confirmed names
+        existing_name = identity.get("canonical_name")
+        existing_status = identity.get("status", "unknown")
+        if existing_name and existing_status in ("confirmed", "probable"):
+            changes["skipped_confirmed"].append({
+                "cluster_id": cid,
+                "existing_name": existing_name,
+                "proposed_name": profile.display_name,
+            })
+            continue
+
+        # Determine what to write
+        display = profile.display_name
+        full_name = profile.best_full_name
+
+        # Build the name to write
+        if profile.name_confidence >= 0.80:
+            # High confidence — use best full name if available
+            write_name = full_name or profile.likely_name
+            write_status = "deepscript_confident"
+        elif profile.name_confidence >= 0.60:
+            write_name = f"{profile.likely_name} (likely)"
+            write_status = "deepscript_likely"
+        else:
+            write_name = f"{profile.likely_name} (possible)"
+            write_status = "deepscript_possible"
+
+        # Update the identity
+        old_name = identity.get("canonical_name")
+        identity["canonical_name"] = write_name
+        identity["deepscript_status"] = write_status
+        identity["deepscript_confidence"] = round(profile.name_confidence, 3)
+        identity["deepscript_role"] = profile.role
+        identity["deepscript_evidence_count"] = len(profile.evidence)
+        identity["deepscript_full_name"] = full_name
+
+        # Track aliases — keep history of names
+        aliases = identity.get("aliases", [])
+        if old_name and old_name not in aliases:
+            aliases.append(old_name)
+        if profile.likely_name not in aliases and profile.likely_name != write_name:
+            aliases.append(profile.likely_name)
+        identity["aliases"] = aliases
+
+        changes["updated"].append({
+            "cluster_id": cid,
+            "old_name": old_name,
+            "new_name": write_name,
+            "confidence": profile.name_confidence,
+            "status": write_status,
+            "full_name": full_name,
+            "role": profile.role,
+            "calls": profile.total_calls,
+        })
+
+    # Save updated DB
+    if changes["updated"]:
+        db["identities"] = identities
+
+        # Atomic write
+        import os, uuid
+        tmp = path.with_suffix(f".tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
+        try:
+            with open(tmp, "w") as f:
+                json.dump(db, f, indent=2, default=str)
+            tmp.replace(path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+        logger.info("Updated %d speaker names in %s", len(changes["updated"]), path)
+
+    return {
+        "updated": len(changes["updated"]),
+        "skipped_confirmed": len(changes["skipped_confirmed"]),
+        "skipped_low_confidence": len(changes["skipped_low_confidence"]),
+        "not_in_db": len(changes["not_in_db"]),
+        "details": changes,
+    }
