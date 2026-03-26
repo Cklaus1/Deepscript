@@ -108,6 +108,13 @@ def _analyze_single(
     from deepscript.core.speaker_enrichment import enrich_speakers
     enrich_speakers(transcript)
 
+    # Chunk awareness — use pre-analyzed chunk data from AudioScript for long recordings
+    from deepscript.core.chunk_handler import (
+        is_chunked, extract_chunk_topics, extract_chunk_actions,
+        extract_chunk_classification, get_chunk_metadata,
+    )
+    chunked = is_chunked(transcript)
+
     # Calendar
     calendar_context: CalendarContext | None = None
     if calendar_enabled and settings.calendar.enabled:
@@ -118,9 +125,12 @@ def _analyze_single(
         except Exception as e:
             logger.warning("Calendar failed for %s: %s", file_path, e)
 
-    # Classify
+    # Classify — use AudioScript's LLM classification for chunked transcripts if available
     if call_type_override:
         classification = Classification(call_type=call_type_override, confidence=1.0, scores={call_type_override: 1.0})
+    elif chunked and extract_chunk_classification(transcript):
+        chunk_type = extract_chunk_classification(transcript)
+        classification = Classification(call_type=chunk_type, confidence=0.9, scores={chunk_type: 0.9})
     elif settings.classify:
         classification = classify_transcript(transcript, settings.custom_classifications, llm=llm)
     else:
@@ -132,9 +142,12 @@ def _analyze_single(
     # Communication
     communication = analyze_communication(transcript) if settings.communication.enabled else None
 
-    # Topics
+    # Topics — use chunk topics for chunked transcripts (already LLM-analyzed)
     topics: list[Topic] | None = None
-    if settings.topics.enabled:
+    if chunked:
+        topics = extract_chunk_topics(transcript)
+        logger.info("Using %d chunk-derived topics for %s", len(topics) if topics else 0, file_path.name)
+    elif settings.topics.enabled:
         try:
             topics = segment_topics(transcript, llm=llm, min_duration=settings.topics.min_duration,
                                      max_topics=settings.topics.max_topics, method=settings.topics.method)
@@ -149,6 +162,20 @@ def _analyze_single(
     analysis = analyzer.analyze(transcript)
     analysis.call_type = classification.call_type
 
+    # Merge chunk action items into analysis (supplement, don't replace)
+    if chunked:
+        chunk_actions = extract_chunk_actions(transcript)
+        if chunk_actions:
+            existing = analysis.sections.get("action_items", [])
+            # Deduplicate by normalizing text
+            existing_texts = {(a.get("text", "") or "").lower()[:50] for a in existing}
+            for ca in chunk_actions:
+                text = (ca.get("text", ca.get("action", "")) or "").lower()[:50]
+                if text and text not in existing_texts:
+                    existing.append(ca)
+                    existing_texts.add(text)
+            analysis.sections["action_items"] = existing
+
     # Tags + format
     tags = generate_tags(classification, communication, topics, source_file=file_path.name)
     json_result = format_json(classification, communication, analysis, topics=topics,
@@ -156,6 +183,8 @@ def _analyze_single(
     json_result["tags"] = tags
     if calendar_context:
         json_result["calendar_context"] = calendar_context.to_dict()
+    if chunked:
+        json_result["chunk_metadata"] = get_chunk_metadata(transcript)
 
     # CMS
     if cms_enabled:
