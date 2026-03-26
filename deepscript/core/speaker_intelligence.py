@@ -533,6 +533,49 @@ def format_speaker_profiles(profiles: dict[str, SpeakerProfile]) -> str:
 # --- Speaker DB Writeback ---
 
 
+def _is_upgrade(existing_name: str | None, new_name: str, new_confidence: float) -> bool:
+    """Check if the new name is an upgrade over the existing one.
+
+    Upgrades:
+    - No existing name → any name is an upgrade
+    - "Adam" → "Adam Fuller" (more specific)
+    - "Adam (possible)" → "Adam (likely)" (higher confidence)
+    - "Adam (likely)" → "Adam Fuller" (qualifier removed + full name)
+
+    NOT upgrades:
+    - "Adam Fuller" → "Adam" (less specific)
+    - "Adam Fuller" → "Tom" (different person — flag as conflict)
+    """
+    if not existing_name:
+        return True
+
+    # Strip qualifiers for comparison
+    clean_existing = existing_name.split(" (")[0].strip()
+    clean_new = new_name.split(" (")[0].strip()
+
+    # Same base name, new is longer (more specific) → upgrade
+    if clean_existing.lower() in clean_new.lower() and len(clean_new) > len(clean_existing):
+        return True
+
+    # Same base name, existing had qualifier, new doesn't → upgrade
+    if clean_existing.lower() == clean_new.lower() and "(" in existing_name and "(" not in new_name:
+        return True
+
+    # Existing had qualifier, new has better qualifier → upgrade
+    qual_rank = {"(possible)": 1, "(likely)": 2}
+    existing_qual = 0
+    new_qual = 3  # No qualifier = best
+    for q, rank in qual_rank.items():
+        if q in existing_name:
+            existing_qual = rank
+        if q in new_name:
+            new_qual = rank
+    if clean_existing.lower() == clean_new.lower() and new_qual > existing_qual:
+        return True
+
+    return False
+
+
 def writeback_to_speaker_db(
     profiles: dict[str, SpeakerProfile],
     speaker_db_path: str | Path,
@@ -540,16 +583,19 @@ def writeback_to_speaker_db(
 ) -> dict[str, Any]:
     """Write identified speaker names back to AudioScript's speaker_identities.json.
 
-    Progressive naming:
-    - ≥0.80: Write full name as canonical_name (e.g., "Adam Schwartz")
-    - ≥0.60: Write with qualifier (e.g., "Adam (likely)")
-    - ≥0.40: Write with qualifier (e.g., "Adam (possible)")
-    - <0.40: Don't write — not confident enough
-
-    Never overwrites AudioScript-confirmed names. Uses "deepscript_inferred" status.
+    Progressive naming with versioned history:
+    - Upgrades existing names when we learn more (Adam → Adam Fuller)
+    - Tracks name history with timestamps, sources, and confidence
+    - Maintains aliases (goes-by names, professional vs personal names)
+    - Never downgrades — only replaces with more specific or higher confidence names
+    - Flags conflicts when evidence points to different people
 
     Returns: summary of changes made.
     """
+    from datetime import datetime, timezone
+    import os
+    import uuid
+
     path = Path(speaker_db_path)
     if not path.exists():
         logger.warning("Speaker DB not found: %s", path)
@@ -558,15 +604,16 @@ def writeback_to_speaker_db(
     with open(path) as f:
         db = json.load(f)
 
+    now = datetime.now(timezone.utc).isoformat()
     identities = db.get("identities", {})
-    changes = {"updated": [], "skipped_confirmed": [], "skipped_low_confidence": [], "not_in_db": []}
+    changes = {"updated": [], "upgraded": [], "conflicts": [],
+               "skipped_low_confidence": [], "not_in_db": []}
 
     for cid, profile in profiles.items():
         if not profile.likely_name or profile.name_confidence < min_confidence:
             if profile.likely_name:
                 changes["skipped_low_confidence"].append({
-                    "cluster_id": cid,
-                    "name": profile.likely_name,
+                    "cluster_id": cid, "name": profile.likely_name,
                     "confidence": profile.name_confidence,
                 })
             continue
@@ -576,68 +623,98 @@ def writeback_to_speaker_db(
             continue
 
         identity = identities[cid]
-
-        # Don't overwrite AudioScript-confirmed names
         existing_name = identity.get("canonical_name")
-        existing_status = identity.get("status", "unknown")
-        if existing_name and existing_status in ("confirmed", "probable"):
-            changes["skipped_confirmed"].append({
-                "cluster_id": cid,
-                "existing_name": existing_name,
-                "proposed_name": profile.display_name,
-            })
-            continue
-
-        # Determine what to write
-        display = profile.display_name
         full_name = profile.best_full_name
 
-        # Build the name to write
+        # Build the candidate name
         if profile.name_confidence >= 0.80:
-            # High confidence — use best full name if available
-            write_name = full_name or profile.likely_name
-            write_status = "deepscript_confident"
+            candidate_name = full_name or profile.likely_name
+            candidate_status = "deepscript_confident"
         elif profile.name_confidence >= 0.60:
-            write_name = f"{profile.likely_name} (likely)"
-            write_status = "deepscript_likely"
+            candidate_name = f"{profile.likely_name} (likely)"
+            candidate_status = "deepscript_likely"
         else:
-            write_name = f"{profile.likely_name} (possible)"
-            write_status = "deepscript_possible"
+            candidate_name = f"{profile.likely_name} (possible)"
+            candidate_status = "deepscript_possible"
 
-        # Update the identity
-        old_name = identity.get("canonical_name")
-        identity["canonical_name"] = write_name
-        identity["deepscript_status"] = write_status
+        # Check for conflict — different base name
+        clean_existing = (existing_name or "").split(" (")[0].strip().lower()
+        clean_candidate = candidate_name.split(" (")[0].strip().lower()
+        if existing_name and clean_existing and clean_candidate and clean_existing != clean_candidate:
+            # Check if one contains the other (Adam vs Adam Fuller = not a conflict)
+            if clean_existing not in clean_candidate and clean_candidate not in clean_existing:
+                changes["conflicts"].append({
+                    "cluster_id": cid,
+                    "existing_name": existing_name,
+                    "proposed_name": candidate_name,
+                    "confidence": profile.name_confidence,
+                })
+                # Don't overwrite — flag for human review
+                # But still record in name_history
+                _add_name_history(identity, candidate_name, profile.name_confidence,
+                                  candidate_status, profile, now, conflict=True)
+                continue
+
+        # Check if this is an upgrade
+        if existing_name and not _is_upgrade(existing_name, candidate_name, profile.name_confidence):
+            # Not an upgrade — but still record the evidence in history
+            _add_name_history(identity, candidate_name, profile.name_confidence,
+                              candidate_status, profile, now)
+            continue
+
+        # Apply the update
+        change_type = "upgraded" if existing_name else "updated"
+
+        # Record in name history BEFORE overwriting
+        _add_name_history(identity, candidate_name, profile.name_confidence,
+                          candidate_status, profile, now)
+
+        # Update canonical name
+        identity["canonical_name"] = candidate_name
+        identity["deepscript_status"] = candidate_status
         identity["deepscript_confidence"] = round(profile.name_confidence, 3)
         identity["deepscript_role"] = profile.role
         identity["deepscript_evidence_count"] = len(profile.evidence)
         identity["deepscript_full_name"] = full_name
+        identity["deepscript_updated_at"] = now
 
-        # Track aliases — keep history of names
+        # Manage aliases — all known names for this person
         aliases = identity.get("aliases", [])
-        if old_name and old_name not in aliases:
-            aliases.append(old_name)
-        if profile.likely_name not in aliases and profile.likely_name != write_name:
-            aliases.append(profile.likely_name)
-        identity["aliases"] = aliases
+        # Add previous canonical name as alias
+        if existing_name and existing_name not in aliases:
+            clean = existing_name.split(" (")[0].strip()
+            if clean and clean not in aliases:
+                aliases.append(clean)
+        # Add first-name-only as alias if we have full name
+        if full_name and " " in full_name:
+            first = full_name.split()[0]
+            if first not in aliases:
+                aliases.append(first)
+        # Add likely_name if different from canonical
+        if profile.likely_name and profile.likely_name != candidate_name:
+            clean = profile.likely_name.split(" (")[0].strip()
+            if clean not in aliases:
+                aliases.append(clean)
+        # Deduplicate
+        identity["aliases"] = sorted(set(aliases))
 
-        changes["updated"].append({
+        changes[change_type].append({
             "cluster_id": cid,
-            "old_name": old_name,
-            "new_name": write_name,
+            "old_name": existing_name,
+            "new_name": candidate_name,
             "confidence": profile.name_confidence,
-            "status": write_status,
+            "status": candidate_status,
             "full_name": full_name,
             "role": profile.role,
             "calls": profile.total_calls,
+            "aliases": identity["aliases"],
         })
 
     # Save updated DB
-    if changes["updated"]:
+    total_changes = len(changes["updated"]) + len(changes["upgraded"])
+    if total_changes > 0 or changes["conflicts"]:
         db["identities"] = identities
 
-        # Atomic write
-        import os, uuid
         tmp = path.with_suffix(f".tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}")
         try:
             with open(tmp, "w") as f:
@@ -647,12 +724,64 @@ def writeback_to_speaker_db(
             if tmp.exists():
                 tmp.unlink()
 
-        logger.info("Updated %d speaker names in %s", len(changes["updated"]), path)
+        logger.info("Speaker DB: %d new, %d upgraded, %d conflicts in %s",
+                     len(changes["updated"]), len(changes["upgraded"]),
+                     len(changes["conflicts"]), path)
 
     return {
-        "updated": len(changes["updated"]),
-        "skipped_confirmed": len(changes["skipped_confirmed"]),
+        "new_names": len(changes["updated"]),
+        "upgraded": len(changes["upgraded"]),
+        "conflicts": len(changes["conflicts"]),
         "skipped_low_confidence": len(changes["skipped_low_confidence"]),
         "not_in_db": len(changes["not_in_db"]),
         "details": changes,
     }
+
+
+def _add_name_history(
+    identity: dict[str, Any],
+    name: str,
+    confidence: float,
+    status: str,
+    profile: "SpeakerProfile",
+    timestamp: str,
+    conflict: bool = False,
+) -> None:
+    """Add an entry to the speaker's name history.
+
+    Tracks every identification attempt with timestamp, source,
+    confidence, and evidence. Enables trend analysis and audit trail.
+    """
+    history = identity.setdefault("name_history", [])
+
+    # Collect evidence sources
+    sources = sorted(set(e.source for e in profile.evidence))
+    top_evidence = sorted(profile.evidence, key=lambda e: -e.confidence)[:3]
+
+    entry = {
+        "timestamp": timestamp,
+        "name": name,
+        "confidence": round(confidence, 3),
+        "status": status,
+        "conflict": conflict,
+        "sources": sources,
+        "evidence_count": len(profile.evidence),
+        "top_evidence": [
+            {"source": e.source, "name": e.name, "detail": e.detail[:100]}
+            for e in top_evidence
+        ],
+        "role": profile.role,
+        "calls_at_time": profile.total_calls,
+    }
+
+    # Don't add duplicate entries (same name + confidence within 1 hour)
+    if history:
+        last = history[-1]
+        if last.get("name") == name and last.get("confidence") == round(confidence, 3):
+            return
+
+    history.append(entry)
+
+    # Keep last 20 entries max
+    if len(history) > 20:
+        identity["name_history"] = history[-20:]

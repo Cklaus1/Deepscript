@@ -36,7 +36,6 @@ def speakers(
             cli_ctx.console.print("[red]--transcripts required for identify[/red]")
             raise typer.Exit(1)
 
-        # Auto-find speaker DB if not specified
         db_path = speaker_db
         if not db_path:
             candidate = Path(transcripts) / "speaker_identities.json"
@@ -55,10 +54,13 @@ def speakers(
         if writeback and db_path:
             wb_result = writeback_to_speaker_db(profiles, db_path, min_confidence=min_confidence)
             cli_ctx.console.print(
-                f"[green]Writeback:[/green] {wb_result['updated']} updated, "
-                f"{wb_result['skipped_confirmed']} kept (confirmed), "
+                f"[green]Writeback:[/green] {wb_result['new_names']} new, "
+                f"{wb_result['upgraded']} upgraded, "
+                f"{wb_result['conflicts']} conflicts, "
                 f"{wb_result['skipped_low_confidence']} skipped (low confidence)"
             )
+            if wb_result["conflicts"] > 0:
+                cli_ctx.console.print("[yellow]Conflicts need human review — see details[/yellow]")
 
         if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET, OutputFormat.YAML):
             result = {
@@ -72,12 +74,22 @@ def speakers(
             emit(result, cli_ctx)
         else:
             print(format_speaker_profiles(profiles))
-            if wb_result and wb_result["updated"] > 0:
-                print(f"\n## Writeback Summary")
-                print(f"Updated {wb_result['updated']} names in speaker DB:")
-                for change in wb_result["details"]["updated"]:
-                    old = change["old_name"] or "unnamed"
-                    print(f"  {change['cluster_id']}: {old} → {change['new_name']} ({change['confidence']:.0%}, {change['calls']} calls)")
+            if wb_result:
+                details = wb_result.get("details", {})
+                if details.get("updated"):
+                    print(f"\n## New Names ({len(details['updated'])})")
+                    for c in details["updated"]:
+                        aliases = ", ".join(c.get("aliases", []))
+                        alias_str = f" (aliases: {aliases})" if aliases else ""
+                        print(f'  {c["cluster_id"]}: → {c["new_name"]} ({c["confidence"]:.0%}, {c["calls"]} calls){alias_str}')
+                if details.get("upgraded"):
+                    print(f"\n## Upgraded ({len(details['upgraded'])})")
+                    for c in details["upgraded"]:
+                        print(f'  {c["cluster_id"]}: {c["old_name"]} → {c["new_name"]} ({c["confidence"]:.0%})')
+                if details.get("conflicts"):
+                    print(f"\n## Conflicts — Needs Review ({len(details['conflicts'])})")
+                    for c in details["conflicts"]:
+                        print(f'  {c["cluster_id"]}: DB has "{c["existing_name"]}" but evidence says "{c["proposed_name"]}" ({c["confidence"]:.0%})')
 
     elif action == "profile":
         if not name_or_id:
@@ -100,15 +112,12 @@ def speakers(
             contacts_provider=contacts,
         )
 
-        # Find by name or cluster ID
         match = None
         for cid, p in profiles.items():
             if cid == name_or_id or (p.likely_name and p.likely_name.lower() == name_or_id.lower()):
                 match = p
                 break
-
         if not match:
-            # Partial match
             for p in profiles.values():
                 if p.likely_name and name_or_id.lower() in p.likely_name.lower():
                     match = p
@@ -141,8 +150,8 @@ def speakers(
         if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET):
             emit({
                 "speakers": [
-                    {"cluster_id": p.cluster_id, "name": p.likely_name, "confidence": p.name_confidence,
-                     "calls": p.total_calls, "role": p.role}
+                    {"cluster_id": p.cluster_id, "name": p.likely_name, "display_name": p.display_name,
+                     "confidence": p.name_confidence, "calls": p.total_calls, "role": p.role}
                     for p in sorted(profiles.values(), key=lambda x: -x.name_confidence)
                 ],
             }, cli_ctx)
@@ -151,7 +160,7 @@ def speakers(
             unnamed = sorted([p for p in profiles.values() if not p.likely_name], key=lambda x: -x.total_calls)
             print(f"# Speakers — {len(named)} identified, {len(unnamed)} unknown\n")
             for p in named:
-                print(f"  ✓ {p.likely_name:<25} {p.cluster_id}  {p.total_calls} calls  {p.name_confidence:.0%}  {p.role or ''}")
+                print(f"  ✓ {p.display_name:<30} {p.cluster_id}  {p.total_calls} calls  {p.name_confidence:.0%}  {p.role or ''}")
             if unnamed:
                 print()
                 for p in unnamed[:10]:
