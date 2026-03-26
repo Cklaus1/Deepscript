@@ -48,6 +48,60 @@ AudioScript (fast operational layer)        DeepScript (deeper reasoning layer)
 
 **Principle:** AudioScript links voices reliably. DeepScript figures out who they probably are and whether it matters.
 
+### Cross-Call Speaker Intelligence (DeepScript Feature)
+
+DeepScript identifies speakers across multiple calls by combining evidence from multiple sources:
+
+**Evidence sources (strongest → weakest):**
+
+| Source | Signal | Confidence |
+|--------|--------|-----------|
+| AudioScript voice embedding | Same voice = same person (deterministic) | 0.95+ |
+| AudioScript LLM name extraction | "Chris addresses this speaker as 'Kim'" | 0.85 |
+| Calendar event attendees | Meeting at 2pm with "Kim Anderson, Attorney" | 0.80 |
+| Contact list match | "Kim" → "Kim Anderson, Anderson Law Group" | 0.75 |
+| Email thread participants | Emailed "Adam" about this meeting | 0.70 |
+| Cross-call topic analysis | This voice always discusses estate planning | 0.50 |
+| Cross-call co-speaker patterns | This voice always appears with Chris | 0.40 |
+
+**CLI:**
+```bash
+# Identify speakers across all calls
+deepscript speakers identify --transcripts ./batch10-test/ \
+  --speaker-db ./speaker_identities.json \
+  --calendar ms365 \
+  --contacts ms365
+
+# View speaker profile
+deepscript speakers profile spk_d7b4714c
+
+# Output:
+# spk_d7b4714c:
+#   Likely name: Adam Schwartz (confidence: 0.92)
+#   Evidence:
+#     - LLM: "Chris addresses as 'Adam'" (3 calls)
+#     - Calendar: "Adam Schwartz, Schwartz Wealth" (2 meetings)
+#     - Contacts: "Adam Schwartz" in Outlook
+#     - Topics: wealth management, portfolio review (5 calls)
+#   Role: Financial advisor
+#   Total calls: 8
+#   Total speaking time: 4.2 hours
+#   Co-speakers: Chris Klaus (8 calls), Kim Anderson (3 calls)
+```
+
+**Config:**
+```yaml
+speakers:
+  cross_call: true
+  sources:
+    speaker_db: ./speaker_identities.json
+    calendar: ms365       # ms365 | google | none
+    contacts: ms365       # ms365 | google | none
+    email: ms365          # ms365 | google | none
+  auto_name_threshold: 0.80  # Auto-assign name at this confidence
+  llm_inference: true         # Use LLM to infer identity from topics/context
+```
+
 **Integration:** AudioScript calls DeepScript as a post-processing step (if installed):
 ```yaml
 # .audioscript.yaml

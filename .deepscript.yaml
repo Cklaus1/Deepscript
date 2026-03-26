@@ -44,7 +44,7 @@ discovery:
 
 # LLM configuration
 llm:
-  provider: claude           # claude | openai | ollama | vllm | sglang | nim | none
+  provider: nim              # claude | openai | ollama | vllm | sglang | nim | none
   model: claude-sonnet-4-6
   nim_model: qwen/qwen3-next-80b-a3b-instruct  # Best NIM model (7.5/10 expert, benchmarked 93 models)
   redact_names: false

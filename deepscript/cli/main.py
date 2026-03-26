@@ -90,6 +90,7 @@ from deepscript.cli.commands.benchmark_cmd import benchmark  # noqa: E402
 from deepscript.cli.commands.classify_cmd import classify  # noqa: E402
 from deepscript.cli.commands.playbook_cmd import dashboard, playbook  # noqa: E402
 from deepscript.cli.commands.prep_cmd import prep  # noqa: E402
+from deepscript.cli.commands.speakers_cmd import speakers  # noqa: E402
 from deepscript.cli.commands.usage_cmd import usage  # noqa: E402
 
 app.command(name="analyze", help="Analyze transcript for insights.")(analyze)
@@ -99,6 +100,7 @@ app.command(name="playbook", help="Generate playbook from CMS episodes.")(playbo
 app.command(name="dashboard", help="Generate cross-call analytics dashboard.")(dashboard)
 app.command(name="prep", help="Assemble call prep notes.")(prep)
 app.command(name="benchmark", help="Benchmark LLM models for transcript analysis.")(benchmark)
+app.command(name="speakers", help="Cross-call speaker identification.")(speakers)
 
 
 if __name__ == "__main__":
