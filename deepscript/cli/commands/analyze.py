@@ -82,6 +82,87 @@ def _save_output(file_path: Path, result: dict[str, Any], out_path: Path) -> Non
         logger.warning("Failed to save output for %s: %s", file_path, e)
 
 
+# --- Speaker identification (post-analysis) ---
+
+
+def _run_speaker_identification(
+    files: list[Path],
+    settings: DeepScriptConfig,
+    cli_ctx: CLIContext,
+) -> None:
+    """Run speaker identification + writeback after batch analysis.
+
+    Automatically identifies speakers using all available signals (voice embeddings,
+    calendar, contacts, cross-speaker references, relationship graph, etc.) and
+    writes results back to the speaker DB. Creates new DB entries for speakers
+    found in transcripts but not yet in the DB.
+    """
+    try:
+        from deepscript.core.speaker_intelligence import identify_speakers, writeback_to_speaker_db
+
+        # Find transcript directory and speaker DB
+        transcript_dir = files[0].parent
+        speaker_db_path = transcript_dir / "speaker_identities.json"
+        if not speaker_db_path.exists():
+            # Try parent directory
+            speaker_db_path = transcript_dir.parent / "speaker_identities.json"
+        if not speaker_db_path.exists():
+            return  # No speaker DB — skip silently
+
+        # Load cached calendar/contacts if available
+        cached_calendar = None
+        cached_contacts = None
+
+        # Try to load from temp cache (populated by previous runs)
+        import json as _json
+        for cache_path in [Path("/tmp/ms365-calendar.json")]:
+            if cache_path.exists():
+                try:
+                    with open(cache_path) as f:
+                        cached_calendar = _json.load(f)
+                except Exception:
+                    pass
+
+        for cache_path in [Path("/tmp/ms365-contacts.json")]:
+            if cache_path.exists():
+                try:
+                    with open(cache_path) as f:
+                        cached_contacts = _json.load(f)
+                except Exception:
+                    pass
+
+        # Determine providers from settings
+        calendar_provider = settings.calendar.provider if hasattr(settings, "calendar") else "none"
+        contacts_provider = calendar_provider  # Use same provider for contacts
+
+        profiles = identify_speakers(
+            transcript_dir=str(transcript_dir),
+            speaker_db_path=str(speaker_db_path),
+            calendar_provider=calendar_provider if not cached_calendar else "none",
+            contacts_provider=contacts_provider if not cached_contacts else "none",
+            cached_calendar_events=cached_calendar,
+            cached_contacts=cached_contacts,
+        )
+
+        # Always writeback
+        result = writeback_to_speaker_db(profiles, str(speaker_db_path))
+        named = sum(1 for p in profiles.values() if p.likely_name)
+        created = result.get("created", 0)
+
+        if result["new_names"] or result["upgraded"] or created:
+            logger.info(
+                "Speaker ID: %d/%d identified, %d new, %d upgraded, %d created, %d conflicts",
+                named, len(profiles),
+                result["new_names"], result["upgraded"], created, result["conflicts"],
+            )
+        if result["conflicts"]:
+            logger.warning("Speaker ID: %d conflicts need review", result["conflicts"])
+
+    except Exception as e:
+        # Speaker identification is supplementary — don't fail the analysis
+        logger.debug("Speaker identification skipped: %s", e)
+
+
 # --- Single file analysis ---
 
 
@@ -166,13 +247,13 @@ def _analyze_single(
     if chunked:
         chunk_actions = extract_chunk_actions(transcript)
         if chunk_actions:
+            from deepscript.analyzers.business import BusinessAnalyzer
             existing = analysis.sections.get("action_items", [])
-            # Deduplicate by normalizing text
             existing_texts = {(a.get("text", "") or "").lower()[:50] for a in existing}
             for ca in chunk_actions:
                 text = (ca.get("text", ca.get("action", "")) or "").lower()[:50]
                 if text and text not in existing_texts:
-                    existing.append(ca)
+                    existing.append(BusinessAnalyzer._normalize_action_item(ca))
                     existing_texts.add(text)
             analysis.sections["action_items"] = existing
 
@@ -410,6 +491,12 @@ def analyze(
         finally:
             if manifest and manifest_path:
                 manifest.save(manifest_path)
+
+        # --- Speaker identification + writeback (automatic) ---
+        # Runs after batch analysis to identify speakers across all transcripts
+        # using the full 10-signal pipeline and writes back to the speaker DB.
+        if contexts and not interrupted:
+            _run_speaker_identification(files, settings, cli_ctx)
 
         # Emit results
         if len(contexts) == 1 and not interrupted:

@@ -122,7 +122,10 @@ def _collect_call_details(
         analysis = analyses.get(call_name, {})
 
         # Get call metadata
-        creation_time = metadata.get("audio", {}).get("creation_time", "")
+        creation_time = (
+            metadata.get("audio", {}).get("format_tags", {}).get("creation_time", "")
+            or metadata.get("audio", {}).get("creation_time", "")
+        )
         duration = metadata.get("audio", {}).get("duration_seconds", 0)
         title = llm.get("title", "")
         call_type = analysis.get("classification", {}).get("call_type", "unknown")
@@ -196,11 +199,34 @@ def _render_contact_page(
         hours = profile.total_speaking_seconds / 3600
         lines.append(f"speaking_hours: {hours:.1f}")
 
-    # Contact info placeholders (populated when ms365 contacts connected)
-    lines.append("email: \"\"")
-    lines.append("phone: \"\"")
-    lines.append("company: \"\"")
-    lines.append("title: \"\"")
+    # Contact info — extract from contacts evidence if available
+    contact_email = ""
+    contact_phone = ""
+    contact_company = ""
+    contact_title = ""
+    for ev in profile.evidence:
+        if ev.source == "contacts" and ev.detail:
+            # Parse "Contact: Name, Title at Company (email@example.com)"
+            detail = ev.detail
+            if "(" in detail and "@" in detail:
+                contact_email = detail.split("(")[-1].rstrip(")")
+            if " at " in detail:
+                parts = detail.split(" at ")
+                if len(parts) >= 2:
+                    contact_company = parts[-1].split("(")[0].strip().rstrip(",")
+                # Title is between first comma and " at "
+                after_name = detail.split(",", 1)
+                if len(after_name) >= 2:
+                    contact_title = after_name[1].split(" at ")[0].strip().rstrip(",")
+            elif ", " in detail:
+                after_name = detail.split(",", 1)
+                if len(after_name) >= 2:
+                    contact_title = after_name[1].strip().rstrip(",")
+            break  # Use first contacts match
+    lines.append(f"email: \"{contact_email}\"")
+    lines.append(f"phone: \"{contact_phone}\"")
+    lines.append(f"company: \"{contact_company}\"")
+    lines.append(f"title: \"{contact_title}\"")
     lines.append("linkedin: \"\"")
 
     if calls:

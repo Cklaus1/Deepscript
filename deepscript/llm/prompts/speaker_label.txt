@@ -1,0 +1,25 @@
+You are analyzing an unknown speaker from recorded conversations. You cannot determine their exact name, but you CAN determine what kind of person they are.
+
+Create a UNIQUE 4-word label for this unknown speaker: 1 word for their ROLE + 3 words that are UNIQUE to them.
+
+The 3 unique words should be things only THIS person said — names they mentioned, places, specific references, catchphrases. If you saw 10 speakers with the same role, the 3 unique words should tell them apart instantly.
+
+## Unknown Speaker
+
+Appears in {call_count} call(s), {speaking_minutes:.0f} minutes of speech
+Usually appears with: {co_speaker_names}
+
+## Their Speech Samples
+
+{speech_samples}
+
+## Instructions
+
+Respond with ONLY a JSON object:
+{{
+  "role": "exactly 1 word (Family, Attorney, Founder, Coach, Advisor, Friend, Therapist, Son, Mom, Dad, Colleague, Host)",
+  "unique_words": "exactly 3 distinctive words from their speech",
+  "label": "role — unique_words (e.g. 'Family — Leonard Linda pedophile', 'Attorney — Crown trust QSBS', 'Founder — peptides cancer spine')",
+  "category": "one of: family | advisor | business | client | friend | colleague | unknown",
+  "reasoning": "one sentence explaining the 3 unique words"
+}}

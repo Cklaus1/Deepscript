@@ -1,18 +1,42 @@
-Extract all action items from this transcript. For each action item, identify:
-- The action to be taken
-- Who is responsible (assignee), if mentioned
-- The deadline, if mentioned
-- The speaker who stated the action item
+Extract all action items from this transcript. For each action item, provide a detailed enriched analysis.
 
-Only include concrete, actionable tasks — not vague intentions.
+For each action item, identify:
+- The concrete action to be taken (specific and actionable)
+- Who is responsible (assignee), if mentioned
+- The deadline, if mentioned (use ISO format YYYY-MM-DD when possible)
+- Why that deadline (deadline_reasoning)
+- The speaker who stated the action item
+- Importance: critical / high / medium / low
+- Why that importance level (importance_reasoning)
+- Complexity: trivial / easy / medium / hard / complex
+- Tags: 1-5 relevant category tags (e.g., legal, finance, hiring, product, sales)
+- Risk: what could go wrong if this isn't done, or null
+- Dependencies: what must happen first, or empty array
+- Next action: the immediate next step to move this forward
+- Source quote: the exact words from the transcript (short, <100 chars)
+- Commitment strength: 0.0-1.0 how firmly committed the speaker is (1.0 = "I will do X by Friday", 0.3 = "we should maybe consider")
+- Company: the company or entity this relates to, or null
+
+Only include concrete, actionable tasks — not vague intentions or wishes.
 
 Respond with ONLY a JSON array:
 [
   {{
-    "text": "description of the action item",
+    "text": "specific action item description",
     "assignee": "person name or null",
-    "deadline": "deadline text or null",
-    "speaker": "who said it"
+    "deadline": "YYYY-MM-DD or deadline text or null",
+    "deadline_reasoning": "why this deadline or null",
+    "speaker": "who said it",
+    "importance": "critical|high|medium|low",
+    "importance_reasoning": "why this importance level",
+    "complexity": "trivial|easy|medium|hard|complex",
+    "tags": ["tag1", "tag2"],
+    "risk": "risk description or null",
+    "dependencies": ["dependency1"],
+    "next_action": "immediate next step",
+    "source_quote": "exact short quote from transcript",
+    "commitment_strength": 0.85,
+    "company": "company name or null"
   }}
 ]
 

@@ -213,5 +213,132 @@ def speakers(
         if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET):
             emit({"pages": [str(p) for p in pages], "count": len(pages), "output_dir": output_dir}, cli_ctx)
 
+    elif action == "dedup":
+        if not speaker_db and not transcripts:
+            cli_ctx.console.print("[red]--speaker-db or --transcripts required for dedup[/red]")
+            raise typer.Exit(1)
+
+        db_path = speaker_db
+        if not db_path:
+            candidate = Path(transcripts) / "speaker_identities.json"
+            if candidate.exists():
+                db_path = str(candidate)
+        if not db_path or not Path(db_path).exists():
+            cli_ctx.console.print("[red]Speaker DB not found[/red]")
+            raise typer.Exit(1)
+
+        from deepscript.core.speaker_intelligence import (
+            find_duplicate_speakers,
+            merge_speakers,
+            unmerge_speakers,
+        )
+
+        candidates = find_duplicate_speakers(db_path)
+
+        if not candidates:
+            cli_ctx.console.print("[green]No duplicate speakers found.[/green]")
+            return
+
+        if cli_ctx.format == OutputFormat.QUIET:
+            emit({"candidates": [c.to_dict() for c in candidates], "count": len(candidates)}, cli_ctx)
+        else:
+            cli_ctx.console.print(f"\n[bold]Merge Candidates ({len(candidates)}):[/bold]\n")
+            cli_ctx.console.print(
+                f"{'#':>3}  {'Score':>5}  {'Voice':>5}  {'Name':>5}  {'CoSpk':>5}  "
+                f"{'Cluster A':16}  {'Cluster B':16}  {'Name A':25}  {'Name B':25}  Reasons"
+            )
+            cli_ctx.console.print("─" * 140)
+            for i, c in enumerate(candidates, 1):
+                cli_ctx.console.print(
+                    f"{i:>3}  {c.total_score:>5.2f}  {c.embedding_similarity:>5.2f}  "
+                    f"{c.name_similarity:>5.2f}  {c.co_speaker_overlap:>5.2f}  "
+                    f"{c.cluster_a:16}  {c.cluster_b:16}  "
+                    f"{c.name_a[:25]:25}  {c.name_b[:25]:25}  "
+                    f"{'; '.join(c.reasons)}"
+                )
+
+            # Auto-merge if --writeback and score >= 0.80
+            if writeback:
+                high_confidence = [c for c in candidates if c.total_score >= 0.80]
+                if high_confidence:
+                    cli_ctx.console.print(f"\n[bold yellow]Soft-merging {len(high_confidence)} pairs (score ≥ 0.80, reversible):[/bold yellow]")
+                    merged = 0
+                    for c in high_confidence:
+                        # Keep the cluster with more calls
+                        if c.calls_a >= c.calls_b:
+                            keep, remove = c.cluster_a, c.cluster_b
+                            keep_name, remove_name = c.name_a, c.name_b
+                        else:
+                            keep, remove = c.cluster_b, c.cluster_a
+                            keep_name, remove_name = c.name_b, c.name_a
+                        if merge_speakers(db_path, keep, remove, hard=False):
+                            cli_ctx.console.print(f"  [green]✓[/green] Linked {remove} ({remove_name}) → {keep} ({keep_name})")
+                            merged += 1
+                        else:
+                            cli_ctx.console.print(f"  [red]✗[/red] Failed: {remove} → {keep}")
+                    cli_ctx.console.print(f"\n[green]Soft-merged {merged}/{len(high_confidence)} pairs (use 'unmerge' to undo)[/green]")
+                else:
+                    cli_ctx.console.print("\n[yellow]No pairs above auto-merge threshold (0.80). Review manually.[/yellow]")
+
+    elif action == "unmerge":
+        if not name_or_id:
+            cli_ctx.console.print("[red]Specify cluster ID to unmerge[/red]")
+            raise typer.Exit(1)
+
+        db_path = speaker_db
+        if not db_path:
+            if transcripts:
+                candidate = Path(transcripts) / "speaker_identities.json"
+                if candidate.exists():
+                    db_path = str(candidate)
+        if not db_path or not Path(db_path).exists():
+            cli_ctx.console.print("[red]Speaker DB not found. Use --speaker-db[/red]")
+            raise typer.Exit(1)
+
+        from deepscript.core.speaker_intelligence import unmerge_speakers
+
+        if unmerge_speakers(db_path, name_or_id):
+            cli_ctx.console.print(f"[green]✓ Unmerged {name_or_id} — cluster is independent again[/green]")
+        else:
+            cli_ctx.console.print(f"[red]✗ Failed to unmerge {name_or_id}. Is it a soft-merged cluster?[/red]")
+
+    elif action == "not-same":
+        if not name_or_id or " " not in name_or_id:
+            cli_ctx.console.print("[red]Usage: speakers not-same 'cluster_a cluster_b' --speaker-db <path>[/red]")
+            cli_ctx.console.print("[red]Provide two cluster IDs separated by a space[/red]")
+            raise typer.Exit(1)
+
+        parts = name_or_id.strip().split()
+        if len(parts) != 2:
+            cli_ctx.console.print("[red]Provide exactly two cluster IDs[/red]")
+            raise typer.Exit(1)
+
+        cluster_a, cluster_b = parts
+
+        db_path = speaker_db
+        if not db_path:
+            if transcripts:
+                candidate = Path(transcripts) / "speaker_identities.json"
+                if candidate.exists():
+                    db_path = str(candidate)
+        if not db_path or not Path(db_path).exists():
+            cli_ctx.console.print("[red]Speaker DB not found. Use --speaker-db[/red]")
+            raise typer.Exit(1)
+
+        from deepscript.core.speaker_intelligence import mark_not_same
+
+        # Load DB to show names
+        with open(db_path) as f:
+            _db = json.load(f)
+        _ids = _db.get("identities", {})
+        name_a = _ids.get(cluster_a, {}).get("canonical_name") or cluster_a
+        name_b = _ids.get(cluster_b, {}).get("canonical_name") or cluster_b
+
+        if mark_not_same(db_path, cluster_a, cluster_b):
+            cli_ctx.console.print(f"[green]Marked as different people:[/green] {name_a} ({cluster_a}) ≠ {name_b} ({cluster_b})")
+            cli_ctx.console.print("[dim]Future dedup scans and conflict detection will skip this pair.[/dim]")
+        else:
+            cli_ctx.console.print(f"[red]Failed — check cluster IDs exist in the DB[/red]")
+
     else:
-        cli_ctx.console.print(f"[red]Unknown action: {action}. Use: identify | profile | list | pages[/red]")
+        cli_ctx.console.print(f"[red]Unknown action: {action}. Use: identify | profile | list | pages | dedup | unmerge | not-same[/red]")

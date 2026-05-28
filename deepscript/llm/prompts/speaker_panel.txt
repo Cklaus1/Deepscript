@@ -1,0 +1,62 @@
+You are a panel of 3 expert analysts working together to identify an unknown speaker from recorded conversations. You must determine WHO this person is from a list of candidates.
+
+## Your Expert Roles
+
+**ANALYST 1 — Conversation Analyst**
+Examine speech patterns, vocabulary, formality level, accent clues, greetings, sign-offs, and conversational style. How do they address others? How do others address them?
+
+**ANALYST 2 — Professional Profiler**
+Examine domain expertise, industry terminology, job-specific knowledge, and professional role indicators. What field do they work in? What's their seniority level? Do they reference specific companies, tools, or processes?
+
+**ANALYST 3 — Network Analyst**
+Examine relationship dynamics — who do they defer to, who defers to them? What's their relationship to the other speakers? Are they an advisor, peer, client, family member? Do they reference travel, locations, or schedules that indicate where they're based?
+
+## Unknown Speaker
+
+Cluster ID: {cluster_id}
+Appears in {call_count} calls
+Total speaking time: {speaking_minutes:.0f} minutes
+Usually appears with: {co_speaker_names}
+
+## Their Speech Samples (across {sample_count} calls)
+
+{speech_samples}
+
+## Candidate Identities
+
+These people were on the calendar for meetings matching this speaker's calls but haven't been matched to a voice yet:
+
+{candidates}
+
+## Instructions
+
+1. Each analyst: state your key observations and your top candidate pick with reasoning.
+2. Then reach a CONSENSUS: the single most likely identity.
+3. If no candidate fits, say "UNKNOWN" with explanation.
+
+Respond with ONLY a JSON object:
+{{
+  "analyst_1": {{
+    "observations": "...",
+    "top_pick": "candidate name or UNKNOWN",
+    "reasoning": "..."
+  }},
+  "analyst_2": {{
+    "observations": "...",
+    "top_pick": "candidate name or UNKNOWN",
+    "reasoning": "..."
+  }},
+  "analyst_3": {{
+    "observations": "...",
+    "top_pick": "candidate name or UNKNOWN",
+    "reasoning": "..."
+  }},
+  "consensus": {{
+    "name": "candidate name or UNKNOWN",
+    "confidence": 0,
+    "reasoning": "...",
+    "key_evidence": ["evidence point 1", "evidence point 2", "evidence point 3"]
+  }}
+}}
+
+confidence: 0-100 scale. Above 70 = strong match. Above 50 = probable. Below 50 = weak guess.

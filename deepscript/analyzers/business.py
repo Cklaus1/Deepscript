@@ -54,6 +54,16 @@ class BusinessAnalyzer(BaseAnalyzer):
             if combined and combined.sections.get("summary"):
                 # Add attendees (always rule-based, needs segments)
                 combined.sections["attendees"] = self._extract_attendees(transcript.get("segments", []))
+                # Enrich action items — if any lack enrichment, re-extract all
+                items = combined.sections.get("action_items", [])
+                if items and any(not i.get("importance") for i in items):
+                    text = transcript.get("text", "")
+                    segments = transcript.get("segments", [])
+                    combined.sections["action_items"] = self._extract_action_items(text, segments)
+                elif items:
+                    combined.sections["action_items"] = [
+                        self._normalize_action_item(i) for i in items if i.get("text")
+                    ]
                 return combined
 
         # Multi-call fallback
@@ -108,19 +118,74 @@ class BusinessAnalyzer(BaseAnalyzer):
             "method": "rule-based",
         }
 
+    _VALID_IMPORTANCE = {"critical", "high", "medium", "low"}
+    _VALID_COMPLEXITY = {"trivial", "easy", "medium", "hard", "complex"}
+
     def _extract_action_items(
         self, text: str, segments: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        # LLM extraction
+        # LLM extraction with enriched fields
         if self.llm:
             truncated = text if len(text.split()) <= 4000 else " ".join(text.split()[:4000])
             prompt = self.llm.render_prompt("action_items", transcript=truncated)
             result = self.llm.complete_json(prompt)
             if result and isinstance(result, list):
-                return result
+                return [self._normalize_action_item(item) for item in result if item.get("text")]
 
         # Rule-based fallback
         return self._extract_action_items_rule_based(segments)
+
+    @classmethod
+    def _normalize_action_item(cls, item: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize enriched action item fields from LLM output."""
+        normalized = {
+            "text": str(item.get("text", "")).strip(),
+            "assignee": item.get("assignee") or None,
+            "deadline": item.get("deadline") or None,
+            "deadline_reasoning": item.get("deadline_reasoning") or None,
+            "speaker": item.get("speaker") or "Unknown",
+            "importance": "medium",
+            "importance_reasoning": item.get("importance_reasoning") or None,
+            "complexity": "medium",
+            "tags": [],
+            "risk": item.get("risk") or None,
+            "dependencies": [],
+            "next_action": item.get("next_action") or None,
+            "source_quote": item.get("source_quote") or None,
+            "commitment_strength": 0.65,
+            "company": item.get("company") or None,
+        }
+
+        # Validate importance
+        imp = str(item.get("importance", "")).lower().strip()
+        if imp in cls._VALID_IMPORTANCE:
+            normalized["importance"] = imp
+
+        # Validate complexity
+        cplx = str(item.get("complexity", "")).lower().strip()
+        if cplx in cls._VALID_COMPLEXITY:
+            normalized["complexity"] = cplx
+
+        # Validate tags — must be list of strings
+        tags = item.get("tags")
+        if isinstance(tags, list):
+            normalized["tags"] = [str(t).strip().lower() for t in tags if t][:10]
+
+        # Validate dependencies — must be list of strings
+        deps = item.get("dependencies")
+        if isinstance(deps, list):
+            normalized["dependencies"] = [str(d).strip() for d in deps if d]
+
+        # Validate commitment_strength — must be 0.0-1.0
+        cs = item.get("commitment_strength")
+        if isinstance(cs, (int, float)):
+            normalized["commitment_strength"] = min(1.0, max(0.0, float(cs)))
+
+        # Truncate source_quote to 150 chars
+        if normalized["source_quote"] and len(normalized["source_quote"]) > 150:
+            normalized["source_quote"] = normalized["source_quote"][:147] + "..."
+
+        return normalized
 
     def _extract_action_items_rule_based(
         self, segments: list[dict[str, Any]]
