@@ -22,16 +22,20 @@ def import_fireflies(
     output_dir: str | Path = "transcripts/fireflies",
     email_to_name: dict[str, str] | None = None,
     limit: int = 50,
+    from_date: str | None = None,
+    to_date: str | None = None,
 ) -> dict:
     """Import Fireflies meetings with full transcripts + summaries.
 
     Uses BFlow's Fireflies MCP client to fetch data.
 
     Args:
-        days: Fetch meetings from last N days.
+        days: Fetch meetings from last N days (used if from_date not set).
         output_dir: Where to save converted transcripts.
         email_to_name: Email → display name mapping for attendees.
-        limit: Max meetings to fetch.
+        limit: Max meetings per page (max 50).
+        from_date: ISO date string to start from (e.g. "2025-02-01").
+        to_date: ISO date string to end at (e.g. "2026-05-28").
 
     Returns: {"imported": int, "skipped": int, "failed": int, "files": []}
     """
@@ -60,7 +64,13 @@ def import_fireflies(
 
     async def _fetch_all():
         # List meetings
-        list_result = await fireflies_list_meetings(limit=limit, days=days)
+        list_result = await fireflies_list_meetings(
+            limit=min(limit, 50),
+            from_date=from_date,
+            to_date=to_date,
+            days=days if not from_date else 30,
+            max_pages=50,
+        )
         if not list_result.get("success"):
             logger.error("Failed to list meetings: %s", list_result.get("error"))
             return []

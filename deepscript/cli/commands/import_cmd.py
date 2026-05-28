@@ -14,6 +14,8 @@ def import_transcripts_cmd(
     source: str = typer.Argument(help="Source: fireflies | circleback"),
     output_dir: str = typer.Option("transcripts/imported", "--output-dir", "-o", help="Where to save imported transcripts."),
     days: int = typer.Option(30, "--days", "-d", help="Fetch meetings from last N days."),
+    from_date: Optional[str] = typer.Option(None, "--from-date", help="Start date (YYYY-MM-DD)."),
+    to_date: Optional[str] = typer.Option(None, "--to-date", help="End date (YYYY-MM-DD)."),
     meeting_id: Optional[str] = typer.Option(None, "--meeting-id", "-m", help="Import a specific meeting by ID."),
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Run deepscript analyze after import."),
     ctx: typer.Context = typer.Option(None, hidden=True),
@@ -23,17 +25,15 @@ def import_transcripts_cmd(
 
     cli_ctx.console.print(f"[bold]Importing from {source}...[/bold]")
 
-    if source == "fireflies":
-        from deepscript.integrations.fireflies_import import import_fireflies
-        result_dict = import_fireflies(days=days, output_dir=output_dir, limit=50)
-        from dataclasses import dataclass
-        @dataclass
-        class _R:
-            source: str; imported: int; skipped: int; failed: int; files: list
-        result = _R(source=source, **result_dict)
-    else:
-        from deepscript.integrations.transcript_import import import_transcripts
-        result = import_transcripts(source=source, output_dir=output_dir, days=days, meeting_id=meeting_id)
+    from deepscript.integrations.transcript_import import import_transcripts
+    result = import_transcripts(
+        source=source,
+        output_dir=output_dir,
+        days=days,
+        meeting_id=meeting_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
     if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET):
         emit({
