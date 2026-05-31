@@ -25,6 +25,9 @@ Thumbs.db
 .deepscript-manifest.json
 analysis-output/
 CRM/
+transcripts/
+logs/
+cache/
 
 # Test/build artifacts
 .pytest_cache/

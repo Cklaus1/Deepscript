@@ -42,6 +42,7 @@ def fireflies_to_deepscript(
     transcript_text: str,
     summary_data: dict | str | None = None,
     email_to_name: dict[str, str] | None = None,
+    fallback_title: str | None = None,
 ) -> dict:
     """Convert a Fireflies meeting (transcript + summary) to DeepScript format.
 
@@ -50,13 +51,14 @@ def fireflies_to_deepscript(
         transcript_text: Raw text from fireflies_get_transcript (Speaker: text format).
         summary_data: Parsed summary from fireflies_get_summary.
         email_to_name: Email -> name mapping.
+        fallback_title: Filename-based title when meeting title is missing.
 
     Returns: DeepScript-format transcript dict.
     """
     if email_to_name is None:
         email_to_name = {}
 
-    title = meeting.get("title", "untitled")
+    title = meeting.get("title") or fallback_title or "untitled"
     date_str = meeting.get("dateString", "")
     duration_min = meeting.get("duration", 0) or 0
     meeting_id = meeting.get("id", "")
@@ -141,7 +143,7 @@ def fireflies_to_deepscript(
     }
 
 
-def circleback_to_deepscript(meeting: dict) -> dict:
+def circleback_to_deepscript(meeting: dict, fallback_title: str | None = None) -> dict:
     """Convert Circleback meeting data to DeepScript format.
 
     Circleback returns:
@@ -152,7 +154,7 @@ def circleback_to_deepscript(meeting: dict) -> dict:
     """
     transcript_entries = meeting.get("transcript", [])
     attendees = meeting.get("attendees", [])
-    title = meeting.get("name", "")
+    title = meeting.get("name") or fallback_title or ""
     duration = meeting.get("duration", 0)  # Already in seconds
     created = meeting.get("createdAt", "")
 
@@ -254,15 +256,22 @@ async def _fetch_fireflies(
     limit: int = 50,
     max_pages: int = 50,
 ) -> list[dict]:
-    """Fetch transcripts from Fireflies via BFlow MCP client."""
+    """Fetch transcripts from Fireflies via BFlow MCP client.
+
+    Falls back to scanning transcripts/fireflies/ for pre-fetched meeting
+    metadata JSONs when BFlow is unavailable.
+    """
     try:
         from concierge.fireflies_mcp_client import (
             fireflies_list_meetings,
             fireflies_get_transcript,
         )
     except ImportError:
-        logger.error("BFlow not available. Install or add to path.")
-        return []
+        logger.warning("BFlow not available — falling back to local transcripts/fireflies/")
+        return _fetch_fireflies_local(
+            days=days, meeting_id=meeting_id,
+            from_date=from_date, to_date=to_date,
+        )
 
     meetings = []
 
@@ -307,11 +316,100 @@ async def _fetch_fireflies(
     return meetings
 
 
+def _fetch_fireflies_local(
+    days: int = 30,
+    meeting_id: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> list[tuple[str, dict]]:
+    """Fallback: scan transcripts/fireflies/ for pre-fetched meeting metadata.
+
+    Each JSON file in the directory is expected to contain a Fireflies meeting
+    object (with id, title, dateString, etc.) — the kind that would normally
+    come from fireflies_list_meetings.  The actual transcript text must be
+    fetched separately (e.g. via fetch_fireflies_direct.py) and stored as a
+    parallel .transcript.txt file, or the meeting dict must already contain
+    a "summary" key with the raw transcript text.
+
+    Files already in DeepScript format (have segments[]) are returned as-is
+    so the import loop can copy them directly.
+
+    Returns list of (fallback_title, meeting_dict) tuples where fallback_title
+    is the filename stem (used when meeting.title is None).
+    """
+    ff_dir = Path("transcripts/fireflies")
+    if not ff_dir.is_dir():
+        logger.warning("No local Fireflies directory at %s", ff_dir)
+        return []
+
+    cutoff = datetime.now(timezone.utc)
+    if from_date:
+        cutoff = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    elif days:
+        cutoff = cutoff.replace(hour=0, minute=0, second=0)
+        from datetime import timedelta
+        cutoff = cutoff - timedelta(days=days)
+
+    meetings = []
+    for fname in sorted(ff_dir.iterdir()):
+        if not fname.name.endswith(".json"):
+            continue
+
+        # If a specific meeting_id was requested, only fetch that one
+        if meeting_id and meeting_id not in fname.stem:
+            continue
+
+        try:
+            with open(fname) as f:
+                meeting = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Skipping %s: %s", fname.name, e)
+            continue
+
+        # Check date filter — try JSON field first, then filename
+        date_str = meeting.get("dateString", "")
+        if not date_str:
+            # Try to parse from filename: YYYY-MM-DD_...
+            name_match = re.match(r"(\d{4}-\d{2}-\d{2})", fname.stem)
+            if name_match:
+                date_str = name_match.group(1)
+        if date_str:
+            try:
+                m_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                if m_date < cutoff:
+                    continue
+            except ValueError:
+                pass  # Can't parse date, include anyway
+
+        # If already in DeepScript format (has segments), return as-is
+        if meeting.get("segments") and len(meeting.get("segments", [])) > 1:
+            meetings.append(meeting)
+            continue
+
+        # Look for transcript text in a parallel .transcript.txt file
+        tx_file = fname.with_suffix(".json.transcript.txt")
+        tx_text = ""
+        if tx_file.is_file():
+            try:
+                tx_text = tx_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+
+        fallback_title = fname.stem
+        meetings.append((fallback_title, {"meeting": meeting, "transcript_text": tx_text}))
+
+    return meetings
+
+
 async def _fetch_circleback(
     days: int = 30,
     meeting_id: str | None = None,
 ) -> list[dict]:
-    """Fetch transcripts from Circleback via BFlow MCP client."""
+    """Fetch transcripts from Circleback via BFlow MCP client.
+
+    Falls back to scanning transcripts/circleback/ for pre-fetched meeting
+    JSONs when BFlow is unavailable.
+    """
     try:
         from concierge.circleback_mcp_client import (
             circleback_list_meetings,
@@ -319,8 +417,10 @@ async def _fetch_circleback(
             circleback_get_transcript,
         )
     except ImportError:
-        logger.error("BFlow not available. Install or add to path.")
-        return []
+        logger.warning("BFlow not available — falling back to local transcripts/circleback/")
+        return _fetch_circleback_local(
+            days=days, meeting_id=meeting_id,
+        )
 
     meetings = []
 
@@ -359,6 +459,77 @@ async def _fetch_circleback(
                     if tx_result.get("success") and isinstance(full, dict):
                         full["transcript"] = _parse_mcp_result(tx_result)
                     meetings.append(full)
+
+    return meetings
+
+
+def _fetch_circleback_local(
+    days: int = 30,
+    meeting_id: str | None = None,
+) -> list[dict]:
+    """Fallback: scan transcripts/circleback/ for pre-fetched meeting JSONs.
+
+    Files may already be in DeepScript format (have segments[]) — in that case
+    they are returned as-is so the import loop can copy them directly.
+    Files that are raw Circleback metadata (no segments) but have a parallel
+    .transcript.txt are converted on-the-fly.
+    """
+    cb_dir = Path("transcripts/circleback")
+    if not cb_dir.is_dir():
+        logger.warning("No local Circleback directory at %s", cb_dir)
+        return []
+
+    cutoff = datetime.now(timezone.utc)
+    if days:
+        cutoff = cutoff.replace(hour=0, minute=0, second=0)
+        from datetime import timedelta
+        cutoff = cutoff - timedelta(days=days)
+
+    meetings = []
+    for fname in sorted(cb_dir.iterdir()):
+        if not fname.name.endswith(".json"):
+            continue
+
+        if meeting_id and str(meeting_id) not in fname.stem:
+            continue
+
+        try:
+            with open(fname) as f:
+                meeting = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Skipping %s: %s", fname.name, e)
+            continue
+
+        # Check date filter — try JSON field first, then filename
+        meeting_date = meeting.get("meeting_date", "") or meeting.get("date", "")
+        if not meeting_date:
+            name_match = re.match(r"(\d{4}-\d{2}-\d{2})", fname.stem)
+            if name_match:
+                meeting_date = name_match.group(1)
+        if meeting_date:
+            try:
+                m_date = datetime.strptime(meeting_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                if m_date < cutoff:
+                    continue
+            except ValueError:
+                pass
+
+        # If already in DeepScript format (has segments), return as-is
+        if meeting.get("segments") and len(meeting["segments"]) > 1:
+            meetings.append(meeting)
+            continue
+
+        # Check for transcript in a parallel .transcript.txt file
+        tx_file = fname.with_suffix(".json.transcript.txt")
+        if tx_file.is_file():
+            try:
+                tx_text = tx_file.read_text(encoding="utf-8", errors="replace")
+                if isinstance(meeting, dict):
+                    meeting["transcript"] = tx_text
+            except OSError:
+                pass
+
+        meetings.append((fname.stem, meeting))
 
     return meetings
 
@@ -420,33 +591,59 @@ def import_transcripts(
 
     for raw in raw_meetings:
         try:
+            # Unpack (stem, meeting) from fallback, or raw dict from MCP
             if source == "fireflies":
-                m = raw.get("meeting", raw)
-                tx_text = raw.get("transcript_text", "")
-                converted = fireflies_to_deepscript(
-                    meeting=m,
-                    transcript_text=tx_text,
-                    summary_data=m.get("summary"),
-                    email_to_name=_load_email_map(),
-                )
+                if isinstance(raw, tuple):
+                    fallback_title, raw = raw
+                else:
+                    fallback_title = None
+                # If already in DeepScript format (has segments), use as-is
+                if raw.get("segments") and len(raw.get("segments", [])) > 1:
+                    converted = raw
+                else:
+                    m = raw.get("meeting", raw)
+                    tx_text = raw.get("transcript_text", "")
+                    converted = fireflies_to_deepscript(
+                        meeting=m,
+                        transcript_text=tx_text,
+                        summary_data=m.get("summary"),
+                        email_to_name=_load_email_map(),
+                        fallback_title=fallback_title,
+                    )
             else:
+                if isinstance(raw, tuple):
+                    fallback_title, raw = raw
+                else:
+                    fallback_title = None
                 if isinstance(raw, str):
                     try:
                         raw = json.loads(raw)
                     except json.JSONDecodeError:
                         failed += 1
                         continue
-                converted = circleback_to_deepscript(raw)
+                # If already in DeepScript format (has segments), use as-is
+                if raw.get("segments") and len(raw.get("segments", [])) > 1:
+                    converted = raw
+                else:
+                    converted = circleback_to_deepscript(raw, fallback_title=fallback_title)
 
             # Check if we got any segments
             if not converted.get("segments"):
                 skipped += 1
                 continue
 
-            # Save
-            filename = converted["metadata"]["file"]["name"]
-            if not filename.endswith(".json"):
-                filename += ".json"
+            # Save — disambiguate identical meeting titles with date + short id
+            base_name = converted["metadata"]["file"]["name"]
+            if base_name.endswith(".json"):
+                base_name = base_name[:-5]
+            base_name = _sanitize(base_name)
+            meta = converted.get("metadata", {})
+            ct = (meta.get("audio", {}).get("format_tags", {}) or {}).get("creation_time", "")
+            date_prefix = ct[:10] if ct and len(ct) >= 10 else ""
+            mid = str(meta.get("meeting_id", "") or "")
+            id_suffix = mid[:12] if mid else ""
+            parts = [p for p in (date_prefix, base_name, id_suffix) if p]
+            filename = "_".join(parts) + ".json"
             filepath = output_path / filename
 
             # Don't overwrite existing
