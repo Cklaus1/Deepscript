@@ -48,7 +48,7 @@ llm:
   model: claude-sonnet-4-6
   nim_model: qwen/qwen3.5-397b-a17b  # Top NIM model — benchmarked 2026-05-31: quality 8.92, F1 0.84, grounding 0.97
   redact_names: false
-  budget_per_month: 50.00
+  budget_per_month: 1000000.00  # NIM is free; budget guard uses Claude pricing as proxy. Set very high to avoid false trips.
   cost_tracking: true
 
 # Output
