@@ -166,11 +166,17 @@ class LLMProvider:
         elif self.config.provider in OPENAI_COMPAT_PROVIDERS:
             import openai
             base_url = self.config.base_url or LOCAL_BASE_URLS.get(self.config.provider)
-            api_key = self.config.api_key or os.environ.get("OPENAI_API_KEY")
-            if self.config.provider in NO_KEY_PROVIDERS and not api_key:
+            # Prefer the provider-specific key over the generic OPENAI_API_KEY.
+            # Otherwise an OPENAI_API_KEY in the environment (e.g. sourced from a
+            # shared .env) gets sent to NIM's endpoint and 401s. Explicit
+            # config.api_key always wins.
+            api_key = self.config.api_key
+            if not api_key and self.config.provider == "nim":
+                api_key = os.environ.get("NVIDIA_API_KEY")
+            if not api_key:
+                api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key and self.config.provider in NO_KEY_PROVIDERS:
                 api_key = "not-needed"
-            if self.config.provider == "nim" and not api_key:
-                api_key = os.environ.get("NVIDIA_API_KEY", "not-needed")
             kwargs = {}
             if base_url:
                 kwargs["base_url"] = base_url
