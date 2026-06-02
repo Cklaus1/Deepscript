@@ -24,7 +24,9 @@ load_dotenv("/root/projects/BTask/packages/bflow/.env")
 
 FF_DIR = "/root/projects/deepscript/transcripts/fireflies"
 CB_DIR = "/root/projects/deepscript/transcripts/circleback"
-LOG = "/root/projects/deepscript/logs/fireflies_backlog.log"
+# Meeting IDs the API has confirmed have no transcript — skip on future runs
+# so the backlog actually drains instead of re-fetching dead items daily.
+EMPTY_CACHE = "/root/projects/deepscript/transcripts/.fireflies_empty.json"
 API_KEY = os.environ.get("FIREFLIES_API_KEY", "")
 API_URL = "https://api.fireflies.ai/graphql"
 
@@ -43,11 +45,24 @@ query Transcript($transcriptId: String!) {
 
 
 def log(msg):
-    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
-    print(line, flush=True)
-    os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    with open(LOG, 'a') as f:
-        f.write(line + '\n')
+    # Print only — the caller (cron `>> logfile`, or terminal) owns the sink.
+    # Writing to a file here too would double every line when cron also redirects.
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}", flush=True)
+
+
+def load_empty_cache():
+    """Return set of meeting IDs previously confirmed empty by the API."""
+    try:
+        with open(EMPTY_CACHE) as f:
+            return set(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return set()
+
+
+def save_empty_cache(ids):
+    os.makedirs(os.path.dirname(EMPTY_CACHE), exist_ok=True)
+    with open(EMPTY_CACHE, 'w') as f:
+        json.dump(sorted(ids), f, indent=2)
 
 
 def fetch_transcript(meeting_id):
@@ -189,16 +204,32 @@ def main():
     log(f"CB folder (ULID) needs: {len(cb_needs)}")
     log(f"Total: {len(all_needs)}")
 
+    # Skip meetings already confirmed empty upstream — these will never have a
+    # transcript, so re-fetching them every run just wastes API calls.
+    empty_cache = load_empty_cache()
+    if empty_cache:
+        before = len(all_needs)
+        all_needs = [(mid, fp) for mid, fp in all_needs if mid not in empty_cache]
+        skipped = before - len(all_needs)
+        if skipped:
+            log(f"Skipping {skipped} known-empty (cached); {len(all_needs)} to fetch")
+
+    if not all_needs:
+        log("DONE: nothing to fetch")
+        return
+
     if args.limit > 0:
         all_needs = all_needs[:args.limit]
         log(f"Limited to first {args.limit}")
 
     updated = empty = failed = 0
+    new_empty = set()
     for i, (mid, fp) in enumerate(all_needs):
         sentences, error = fetch_transcript(mid)
         if error:
             if "No sentences" in error or "not found" in error.lower():
                 empty += 1
+                new_empty.add(mid)
             else:
                 failed += 1
                 if failed <= 5:
@@ -207,6 +238,7 @@ def main():
             segments, speakers = sentences_to_segments(sentences)
             if not segments or len(segments) <= 1:
                 empty += 1
+                new_empty.add(mid)
             else:
                 update_file(fp, segments, speakers)
                 updated += 1
@@ -215,6 +247,10 @@ def main():
             log(f"Progress: {i+1}/{len(all_needs)} (ok={updated} empty={empty} fail={failed})")
 
         time.sleep(args.delay)
+
+    if new_empty:
+        save_empty_cache(empty_cache | new_empty)
+        log(f"Cached {len(new_empty)} new empty IDs ({len(empty_cache | new_empty)} total)")
 
     log(f"DONE: ok={updated} empty={empty} fail={failed}")
 
