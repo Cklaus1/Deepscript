@@ -8,13 +8,21 @@ crontab deploy/crontab
 
 ## Schedule
 
-| Time   | Job                                              |
-|--------|--------------------------------------------------|
-| 06:00  | `fetch_new_meetings.py --source circleback`      |
-| 06:05  | `deepscript import circleback --days 1`           |
-| 06:10  | `deepscript import fireflies --days 1`            |
-| 06:15  | `fetch_fireflies_backlog.py`                      |
-| 18:00  | `fetch_new_meetings.py --source circleback fireflies` |
+| Time          | Job                                                         |
+|---------------|-------------------------------------------------------------|
+| every 3h, :07 | fetch → import → analyze new calls (chained, one line)      |
+| 06:15         | `fetch_fireflies_backlog.py` (historical backfill)          |
+| 06:25         | `speakers pages` — regenerate CRM (people/companies/etc.)   |
+
+The 3-hour job is the main pipeline: it fetches new meetings, imports them,
+and analyzes anything new. It's cheap when idle — `analyze --new-only` dedups
+all transcripts in ~0.01s, so a no-op run finishes in well under 20s; only
+genuinely new calls incur an LLM analysis. A measured end-to-end run with one
+new call took ~19s.
+
+CRM regeneration is split out to once daily because it scans every speaker
+profile (~7s) and only needs to be current daily, not every 3 hours. The 3h
+job uses `--no-crm` to stay fast.
 
 ## Gotchas (learned the hard way)
 

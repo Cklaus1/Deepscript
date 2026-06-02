@@ -1,5 +1,20 @@
-0 6 * * * set -a && . /root/projects/deepscript/.env && set +a && python3 /root/projects/deepscript/scripts/fetch_new_meetings.py --source circleback >> /root/projects/deepscript/logs/fetch_new.log 2>&1
-0 18 * * * set -a && . /root/projects/deepscript/.env && set +a && python3 /root/projects/deepscript/scripts/fetch_new_meetings.py --source circleback fireflies >> /root/projects/deepscript/logs/fetch_new.log 2>&1
-5 6 * * * set -a && . /root/projects/deepscript/.env && set +a && cd /root/projects/deepscript && python3 -m deepscript.cli.main import circleback --days 1 -o transcripts/imported >> /root/projects/deepscript/logs/import_circleback.log 2>&1
-10 6 * * * set -a && . /root/projects/deepscript/.env && set +a && cd /root/projects/deepscript && python3 -m deepscript.cli.main import fireflies --days 1 -o transcripts/imported >> /root/projects/deepscript/logs/import_fireflies.log 2>&1
-15 6 * * * set -a && . /root/projects/deepscript/.env && . /root/projects/BTask/packages/bflow/.env && set +a && python3 /root/projects/deepscript/scripts/fetch_fireflies_backlog.py --delay 0.5 >> /root/projects/deepscript/logs/fireflies_backlog.log 2>&1
+# DeepScript pipeline cron
+# Install with: crontab deploy/crontab
+# Notes (see deploy/README.md for the full story):
+#   - Use POSIX `.` not `source` — cron runs /bin/sh (dash), which has no `source`.
+#   - `cd /root/projects/deepscript` before any command using relative paths.
+
+# Every 3 hours: fetch -> import -> analyze new calls.
+# Chained so steps run sequentially (no inter-job races). --new-only makes
+# analyze a fast no-op when nothing is new (dedup is ~0.01s for all files);
+# only genuinely new calls cost an LLM analysis. --no-crm keeps it fast;
+# CRM is regenerated once daily below.
+7 */3 * * * set -a && . /root/projects/deepscript/.env && . /root/projects/BTask/packages/bflow/.env && set +a && cd /root/projects/deepscript && python3 scripts/fetch_new_meetings.py --source circleback fireflies && python3 -m deepscript.cli.main import circleback --days 1 -o transcripts/imported && python3 -m deepscript.cli.main import fireflies --days 1 -o transcripts/imported && python3 -m deepscript.cli.main analyze transcripts/imported -r --new-only --no-crm --output-dir analysis-output >> /root/projects/deepscript/logs/pipeline.log 2>&1
+
+# Once daily 06:15: fireflies backlog backfill (historical, skips known-empty).
+15 6 * * * set -a && . /root/projects/deepscript/.env && . /root/projects/BTask/packages/bflow/.env && set +a && cd /root/projects/deepscript && python3 scripts/fetch_fireflies_backlog.py --delay 0.5 >> /root/projects/deepscript/logs/fireflies_backlog.log 2>&1
+
+# Once daily 06:25: regenerate CRM pages (people/companies/interactions) from
+# all analyzed calls. Separate from the 3h pipeline because it scans every
+# profile (~7s) and only needs to be current once a day.
+25 6 * * * set -a && . /root/projects/deepscript/.env && set +a && cd /root/projects/deepscript && python3 -m deepscript.cli.main speakers pages -t transcripts/imported >> /root/projects/deepscript/logs/crm.log 2>&1
