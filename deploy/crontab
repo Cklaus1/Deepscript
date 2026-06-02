@@ -1,0 +1,5 @@
+0 6 * * * set -a && . /root/projects/deepscript/.env && set +a && python3 /root/projects/deepscript/scripts/fetch_new_meetings.py --source circleback >> /root/projects/deepscript/logs/fetch_new.log 2>&1
+0 18 * * * set -a && . /root/projects/deepscript/.env && set +a && python3 /root/projects/deepscript/scripts/fetch_new_meetings.py --source circleback fireflies >> /root/projects/deepscript/logs/fetch_new.log 2>&1
+5 6 * * * set -a && . /root/projects/deepscript/.env && set +a && cd /root/projects/deepscript && python3 -m deepscript.cli.main import circleback --days 1 -o transcripts/imported >> /root/projects/deepscript/logs/import_circleback.log 2>&1
+10 6 * * * set -a && . /root/projects/deepscript/.env && set +a && cd /root/projects/deepscript && python3 -m deepscript.cli.main import fireflies --days 1 -o transcripts/imported >> /root/projects/deepscript/logs/import_fireflies.log 2>&1
+15 6 * * * set -a && . /root/projects/deepscript/.env && . /root/projects/BTask/packages/bflow/.env && set +a && python3 /root/projects/deepscript/scripts/fetch_fireflies_backlog.py --delay 0.5 >> /root/projects/deepscript/logs/fireflies_backlog.log 2>&1
