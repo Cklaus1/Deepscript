@@ -1,20 +1,18 @@
-"""MiNotes contact page generator — creates speaker profile pages from DeepScript intelligence.
+"""MiNotes CRM page generator — creates person/company/interaction/task pages from DeepScript intelligence.
 
-Each identified speaker gets a MiNotes page with:
-- YAML frontmatter (cluster_id, name, email, phone, company, role, calls, confidence)
-- Call history with dates, types, summaries
-- Topics discussed across all calls
-- Action items assigned to this person
-- Relationship map (co-speakers)
-- Name history (how identification evolved)
+Each identified speaker gets a person page in CRM/people/.
+Each unique company gets a company page in CRM/companies/.
+Each call generates an interaction page in CRM/interactions/.
+Action items are embedded as checkboxes on person pages and indexed in CRM/_Tasks.md.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,32 +21,30 @@ from deepscript.core.speaker_intelligence import SpeakerProfile
 logger = logging.getLogger(__name__)
 
 
-def generate_contact_pages(
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def generate_crm_pages(
     profiles: dict[str, SpeakerProfile],
     transcript_dir: str | Path,
     analysis_dir: str | Path | None = None,
-    output_dir: str | Path = "CRM/Contacts",
+    output_dir: str | Path = "CRM",
     speaker_db_path: str | Path | None = None,
-    min_calls: int = 2,
-) -> list[Path]:
-    """Generate MiNotes contact pages for identified speakers.
+    min_calls: int = 1,
+    cms_store_path: str | Path | None = None,
+    analysis_contexts: dict[str, Any] | None = None,
+) -> dict[str, list[Path]]:
+    """Generate the full CRM structure: people, companies, interactions, tasks.
 
-    Args:
-        profiles: Speaker profiles from identify_speakers().
-        transcript_dir: Directory with AudioScript transcripts.
-        analysis_dir: Directory with DeepScript analysis JSON files.
-        output_dir: Where to write MiNotes pages.
-        speaker_db_path: Path to speaker_identities.json for name history.
-        min_calls: Minimum calls to generate a page (skip one-off speakers).
-
-    Returns: List of written file paths.
+    Returns dict mapping folder name to list of written paths.
     """
     transcript_dir = Path(transcript_dir)
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    cms_path = Path(cms_store_path) if cms_store_path else None
 
     # Load speaker DB for name history
-    speaker_db = {}
+    speaker_db: dict[str, Any] = {}
     if speaker_db_path:
         try:
             with open(speaker_db_path) as f:
@@ -56,51 +52,99 @@ def generate_contact_pages(
         except Exception:
             pass
 
-    # Load transcripts for call details
-    call_details = _collect_call_details(transcript_dir, analysis_dir, profiles)
+    # Collect call details
+    call_details = _collect_call_details(transcript_dir, analysis_dir, cms_path, profiles, analysis_contexts)
 
-    written: list[Path] = []
+    # Build company index
+    company_people: dict[str, list[str]] = defaultdict(list)
+    for cid, profile in profiles.items():
+        if profile.company:
+            company_people[profile.company].append(cid)
 
+    written: dict[str, list[Path]] = {
+        "people": [],
+        "companies": [],
+        "interactions": [],
+    }
+
+    # Write person pages
     for cid, profile in profiles.items():
         if not profile.likely_name:
             continue
         if profile.total_calls < min_calls:
             continue
+        calls = call_details.get(cid, [])
+        page = _render_person_page(profile, calls, speaker_db.get(cid, {}), profiles)
+        safe_name = _sanitize(profile.likely_name)
+        fp = output_path / "people" / f"{safe_name}.md"
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(page, encoding="utf-8")
+        written["people"].append(fp)
 
-        page = _render_contact_page(profile, call_details.get(cid, []), speaker_db.get(cid, {}), profiles)
+    # Write company pages
+    for company, cids in company_people.items():
+        people_pages = []
+        for cid in cids:
+            p = profiles.get(cid)
+            if p and p.likely_name:
+                people_pages.append(_sanitize(p.likely_name))
+        page = _render_company_page(company, people_pages)
+        fp = output_path / "companies" / f"{_sanitize(company)}.md"
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(page, encoding="utf-8")
+        written["companies"].append(fp)
 
-        # Filename: sanitize name
-        import re
-        safe_name = re.sub(r"[^a-zA-Z0-9 _\-]", "", profile.likely_name).strip()
-        if not safe_name:
-            safe_name = cid
-        file_path = output_path / f"{safe_name}.md"
+    # Write interaction pages
+    for call in call_details.values():
+        if isinstance(call, list):
+            for c in call:
+                fp = _write_interaction_page(c, output_path, analysis_contexts)
+                if fp:
+                    written["interactions"].append(fp)
 
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(page)
-        written.append(file_path)
+    # Write global task index
+    _write_task_index(call_details, output_path)
 
-    logger.info("Generated %d contact pages in %s", len(written), output_path)
+    total = sum(len(v) for v in written.values())
+    logger.info("Generated %d CRM pages (%d people, %d companies, %d interactions, tasks indexed)",
+                total, len(written["people"]), len(written["companies"]), len(written["interactions"]))
     return written
 
+
+# ---------------------------------------------------------------------------
+# Call detail collection
+# ---------------------------------------------------------------------------
 
 def _collect_call_details(
     transcript_dir: Path,
     analysis_dir: Path | None,
+    cms_path: Path | None,
     profiles: dict[str, SpeakerProfile],
+    analysis_contexts: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Collect per-speaker call details from transcripts and analyses."""
+    """Collect per-speaker call details from transcripts, analyses, and CMS episodes."""
 
     speaker_calls: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
-    # Load analyses if available
+    # Load analyses
     analyses: dict[str, dict] = {}
     if analysis_dir:
-        analysis_path = Path(analysis_dir)
-        for f in analysis_path.glob("*.analysis.json"):
+        for f in Path(analysis_dir).glob("*.analysis.json"):
             try:
                 with open(f) as fh:
                     analyses[f.stem.replace(".analysis", "")] = json.load(fh)
+            except Exception:
+                continue
+
+    # Load CMS episodes
+    cms_episodes: dict[str, dict] = {}
+    if cms_path and cms_path.exists():
+        for f in cms_path.glob("*.jsonl"):
+            try:
+                with open(f) as fh:
+                    for line in fh:
+                        ep = json.loads(line)
+                        cms_episodes[ep.get("context", {}).get("task_id", "")] = ep
             except Exception:
                 continue
 
@@ -121,7 +165,6 @@ def _collect_call_details(
         metadata = transcript.get("metadata", {})
         analysis = analyses.get(call_name, {})
 
-        # Get call metadata
         creation_time = (
             metadata.get("audio", {}).get("format_tags", {}).get("creation_time", "")
             or metadata.get("audio", {}).get("creation_time", "")
@@ -137,16 +180,21 @@ def _collect_call_details(
         else:
             summary = ""
 
-        # Action items
         action_items = analysis.get("analysis", {}).get("action_items", [])
 
-        # Map speakers to this call
+        # CMS episode data
+        ep = cms_episodes.get(call_name, {})
+        cms_data = {
+            "episode_id": ep.get("episode_id", ""),
+            "scores": ep.get("outcome", {}).get("scores", {}),
+            "findings": ep.get("outcome", {}).get("findings", []),
+        }
+
         for sr in resolved:
-            cid = sr.get("speaker_cluster_id", "")
+            cid = sr.get("speaker_cluster_id", "") or sr.get("local_label", "")
             if cid not in profiles:
                 continue
 
-            # Find action items assigned to this speaker
             speaker_name = (profiles[cid].likely_name or "").lower()
             my_actions = []
             for ai in action_items:
@@ -161,25 +209,29 @@ def _collect_call_details(
                 "title": title,
                 "type": call_type,
                 "duration_min": round(duration / 60, 1) if duration else 0,
-                "summary": summary[:200],
+                "summary": summary[:500],
                 "action_items": my_actions,
+                "cms": cms_data,
             })
 
     return dict(speaker_calls)
 
 
-def _render_contact_page(
+# ---------------------------------------------------------------------------
+# Person page
+# ---------------------------------------------------------------------------
+
+def _render_person_page(
     profile: SpeakerProfile,
     calls: list[dict[str, Any]],
     db_entry: dict[str, Any],
     all_profiles: dict[str, SpeakerProfile],
 ) -> str:
-    """Render a MiNotes contact page as markdown with YAML frontmatter."""
     lines: list[str] = []
 
-    # --- YAML Frontmatter ---
+    # Frontmatter
     lines.append("---")
-    lines.append("type: contact")
+    lines.append("type: person")
     lines.append(f"cluster_id: {profile.cluster_id}")
     lines.append(f"name: \"{profile.likely_name}\"")
     lines.append(f"display_name: \"{profile.display_name}\"")
@@ -192,6 +244,8 @@ def _render_contact_page(
 
     if profile.role:
         lines.append(f"role: \"{profile.role}\"")
+    if profile.company:
+        lines.append(f"company: \"{profile.company}\"")
 
     lines.append(f"total_calls: {profile.total_calls}")
 
@@ -199,14 +253,12 @@ def _render_contact_page(
         hours = profile.total_speaking_seconds / 3600
         lines.append(f"speaking_hours: {hours:.1f}")
 
-    # Contact info — extract from contacts evidence if available
+    # Contact info
     contact_email = ""
     contact_phone = ""
-    contact_company = ""
     contact_title = ""
     for ev in profile.evidence:
         if ev.source == "contacts" and ev.detail:
-            # Parse "Contact: Name, Title at Company (email@example.com)"
             detail = ev.detail
             if "(" in detail and "@" in detail:
                 contact_email = detail.split("(")[-1].rstrip(")")
@@ -214,7 +266,6 @@ def _render_contact_page(
                 parts = detail.split(" at ")
                 if len(parts) >= 2:
                     contact_company = parts[-1].split("(")[0].strip().rstrip(",")
-                # Title is between first comma and " at "
                 after_name = detail.split(",", 1)
                 if len(after_name) >= 2:
                     contact_title = after_name[1].split(" at ")[0].strip().rstrip(",")
@@ -222,12 +273,12 @@ def _render_contact_page(
                 after_name = detail.split(",", 1)
                 if len(after_name) >= 2:
                     contact_title = after_name[1].strip().rstrip(",")
-            break  # Use first contacts match
+            break
+
     lines.append(f"email: \"{contact_email}\"")
     lines.append(f"phone: \"{contact_phone}\"")
-    lines.append(f"company: \"{contact_company}\"")
     lines.append(f"title: \"{contact_title}\"")
-    lines.append("linkedin: \"\"")
+    lines.append(f"linkedin: \"\"")
 
     if calls:
         dates = [c["date"] for c in calls if c["date"]]
@@ -235,32 +286,30 @@ def _render_contact_page(
             lines.append(f"first_contact: \"{min(dates)}\"")
             lines.append(f"last_contact: \"{max(dates)}\"")
 
-    # Aliases
     aliases = db_entry.get("aliases", [])
     if aliases:
         lines.append(f"aliases: {json.dumps(aliases)}")
 
-    # Tags
     tags = [f"speaker/{profile.likely_name.lower().replace(' ', '-')}"]
     if profile.role:
         tags.append(f"role/{profile.role.lower().replace(' ', '-')[:30]}")
     lines.append(f"tags: {json.dumps(tags)}")
-
     lines.append("---")
     lines.append("")
 
-    # --- Page Content ---
+    # Page content
     lines.append(f"# {profile.display_name}")
     lines.append("")
-
     if profile.role:
         lines.append(f"**Role:** {profile.role}")
+    if profile.company:
+        lines.append(f"**Company:** {profile.company}")
     lines.append(f"**Calls:** {profile.total_calls} | **Confidence:** {profile.name_confidence:.0%}")
     if full_name and full_name != profile.likely_name:
         lines.append(f"**Full name:** {full_name}")
     lines.append("")
 
-    # --- Identification Evidence ---
+    # Identification Evidence
     if profile.evidence:
         lines.append("## Identification Evidence")
         lines.append("")
@@ -273,7 +322,7 @@ def _render_contact_page(
             lines.append(f"- [{e.source}] **{e.name}** ({e.confidence:.0%}): {e.detail[:80]}")
         lines.append("")
 
-    # --- Call History ---
+    # Call History
     if calls:
         lines.append("## Call History")
         lines.append("")
@@ -287,7 +336,7 @@ def _render_contact_page(
             lines.append(f"| {date} | {ctype} | {title} | {dur} |")
         lines.append("")
 
-    # --- Topics Discussed ---
+    # Topics
     if profile.topics:
         lines.append("## Topics Discussed")
         lines.append("")
@@ -295,7 +344,7 @@ def _render_contact_page(
             lines.append(f"- {t}")
         lines.append("")
 
-    # --- Action Items ---
+    # Action Items (embedded checkboxes)
     all_actions = []
     for c in calls:
         for ai in c.get("action_items", []):
@@ -309,7 +358,7 @@ def _render_contact_page(
             lines.append(f"- [ ] {ai['text']}{date_str}")
         lines.append("")
 
-    # --- Relationship Map ---
+    # Relationship Map
     if profile.co_speakers:
         lines.append("## Usually With")
         lines.append("")
@@ -320,7 +369,7 @@ def _render_contact_page(
             lines.append(f"- [[{co_name}]]{co_role} — {count} calls together")
         lines.append("")
 
-    # --- Name History ---
+    # Name History
     name_history = db_entry.get("name_history", [])
     if name_history:
         lines.append("## Name History")
@@ -338,6 +387,182 @@ def _render_contact_page(
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Company page
+# ---------------------------------------------------------------------------
+
+def _render_company_page(company: str, people: list[str]) -> str:
+    lines = [
+        "---",
+        "type: company",
+        f"name: \"{company}\"",
+        "---",
+        "",
+        f"# {company}",
+        "",
+        f"**People:** {len(people)}",
+        "",
+        "## People",
+        "",
+    ]
+    for p in people:
+        lines.append(f"- [[{p}]]")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Interaction page
+# ---------------------------------------------------------------------------
+
+def _write_interaction_page(
+    call: dict[str, Any],
+    output_path: Path,
+    analysis_contexts: dict[str, Any] | None = None,
+) -> Path | None:
+    date = call.get("date", "unknown")
+    safe_date = date.replace("-", "") if date else "unknown"
+    safe_title = _sanitize(call.get("title", "call"))[:40]
+    filename = f"{safe_date}-{safe_title}.md"
+    fp = output_path / "interactions" / filename
+    fp.parent.mkdir(parents=True, exist_ok=True)
+
+    cms = call.get("cms", {})
+    lines = [
+        "---",
+        "type: interaction",
+        f"title: \"{call.get('title', '')}\"",
+        f"date: \"{call.get('date', '')}\"",
+        f"call_type: \"{call.get('type', '')}\"",
+        f"duration_min: {call.get('duration_min', 0)}",
+        f"file: \"{call.get('file', '')}\"",
+    ]
+    if cms.get("episode_id"):
+        lines.append(f"cms_episode_id: \"{cms['episode_id']}\"")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# {call.get('title', 'Call')}")
+    lines.append("")
+    lines.append(f"**Date:** {call.get('date', '')}  ")
+    lines.append(f"**Type:** {call.get('type', '')}  ")
+    lines.append(f"**Duration:** {call.get('duration_min', 0):.0f} min")
+    lines.append("")
+
+    summary = call.get("summary", "")
+    if summary:
+        lines.append("## Summary")
+        lines.append("")
+        lines.append(summary)
+        lines.append("")
+
+    if cms.get("findings"):
+        lines.append("## CMS Findings")
+        lines.append("")
+        for f in cms["findings"]:
+            lines.append(f"- {f}")
+        lines.append("")
+
+    if cms.get("scores"):
+        lines.append("## Scores")
+        lines.append("")
+        for k, v in cms["scores"].items():
+            lines.append(f"- **{k}:** {v}")
+        lines.append("")
+
+    # CMS episode references
+    if analysis_contexts and cms.get("episode_id"):
+        ep_id = cms["episode_id"]
+        episodes = analysis_contexts.get("cms_episodes", {})
+        for ep in episodes.get("episodes", []):
+            if ep.get("episode_id") == ep_id:
+                lines.append("## CMS Episode")
+                lines.append("")
+                lines.append(f"- **Episode:** [{ep.get('title', ep_id)}]({ep.get('url', '#')})")
+                lines.append(f"- **Season/Episode:** S{ep.get('season', '?')}:E{ep.get('episode_num', '?')}")
+                lines.append(f"- **Air Date:** {ep.get('air_date', 'TBD')}")
+                lines.append(f"- **Duration:** {ep.get('duration_sec', 0) // 60} min")
+                lines.append("")
+                if ep.get("description"):
+                    lines.append(ep["description"])
+                    lines.append("")
+                break
+
+    fp.write_text("\n".join(lines), encoding="utf-8")
+    return fp
+
+
+# ---------------------------------------------------------------------------
+# Task index
+# ---------------------------------------------------------------------------
+
+def _write_task_index(call_details: dict[str, list[dict[str, Any]]], output_path: Path) -> None:
+    all_tasks: list[dict[str, str]] = []
+
+    for cid, calls in call_details.items():
+        for c in calls:
+            for ai in c.get("action_items", []):
+                all_tasks.append({
+                    "text": ai,
+                    "assignee": cid,
+                    "date": c.get("date", ""),
+                    "call": c.get("title", ""),
+                })
+
+    lines = [
+        "---",
+        "type: task_index",
+        "---",
+        "",
+        "# Tasks",
+        "",
+        f"**Total:** {len(all_tasks)}",
+        "",
+        "| Task | Assignee | Date | Call |",
+        "|------|----------|------|------|",
+    ]
+
+    for t in sorted(all_tasks, key=lambda x: x.get("date", "")):
+        assignee_cid = t["assignee"]
+        # We'll use the CID as a placeholder; the person page link is resolved by the reader
+        lines.append(f"| {t['text']} | {assignee_cid} | {t['date']} | {t['call']} |")
+
+    lines.append("")
+    fp = output_path / "_Tasks.md"
+    fp.write_text("\n".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _sanitize(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9 _\-]", "", name).strip() or "untitled"
+
+
+# ---------------------------------------------------------------------------
+# Legacy compatibility — keep generate_contact_pages for existing callers
+# ---------------------------------------------------------------------------
+
+def generate_contact_pages(
+    profiles: dict[str, SpeakerProfile],
+    transcript_dir: str | Path,
+    analysis_dir: str | Path | None = None,
+    output_dir: str | Path = "CRM/Contacts",
+    speaker_db_path: str | Path | None = None,
+    min_calls: int = 2,
+) -> list[Path]:
+    """Legacy wrapper — delegates to generate_crm_pages for compatibility."""
+    generate_crm_pages(
+        profiles=profiles,
+        transcript_dir=transcript_dir,
+        analysis_dir=analysis_dir,
+        output_dir=output_dir,
+        speaker_db_path=speaker_db_path,
+        min_calls=min_calls,
+    )
+    return list(Path(output_dir).glob("*.md"))
+
+
 def generate_contacts_summary(
     profiles: dict[str, SpeakerProfile],
     output_dir: str | Path = "CRM/Contacts",
@@ -347,7 +572,6 @@ def generate_contacts_summary(
         [p for p in profiles.values() if p.likely_name],
         key=lambda p: -p.total_calls,
     )
-
     lines = [
         "---",
         "type: index",
@@ -359,9 +583,7 @@ def generate_contacts_summary(
         "| Name | Calls | Role | Confidence | Last Contact |",
         "|------|-------|------|-----------|-------------|",
     ]
-
     for p in named:
         role = p.role or ""
         lines.append(f"| [[{p.display_name}]] | {p.total_calls} | {role} | {p.name_confidence:.0%} | |")
-
     return "\n".join(lines)

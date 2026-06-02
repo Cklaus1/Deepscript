@@ -400,6 +400,7 @@ def analyze(
     notify: bool = typer.Option(False, "--notify", help="Send notifications after analysis."),
     parallel: bool = typer.Option(False, "--parallel", help="Process files in parallel (async)."),
     concurrency: Optional[int] = typer.Option(None, "--concurrency", help="Max parallel files (default from config)."),
+    no_crm: bool = typer.Option(False, "--no-crm", help="Skip CRM page generation."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Analyze transcripts for classification, communication metrics, and insights."""
@@ -497,6 +498,47 @@ def analyze(
         # using the full 10-signal pipeline and writes back to the speaker DB.
         if contexts and not interrupted:
             _run_speaker_identification(files, settings, cli_ctx)
+
+        # --- CRM page generation (automatic with --store, overridable with --no-crm) ---
+        if contexts and not interrupted and not no_crm:
+            try:
+                from deepscript.integrations.minotes import generate_crm_pages
+                from deepscript.core.speaker_intelligence import identify_speakers
+
+                db_candidate = Path(files[0]).parent / "speaker_identities.json"
+                db_path = str(db_candidate) if db_candidate.exists() else None
+
+                profiles = identify_speakers(
+                    transcript_dir=str(Path(files[0]).parent),
+                    speaker_db_path=db_path,
+                )
+
+                # Collect analysis contexts keyed by source file
+                analysis_map = {ac.file_path.name: ac for ac in contexts}
+
+                # Find CMS store path
+                cms_path = None
+                for ep in [Path("CMS"), Path("analysis-output").parent / "CMS"]:
+                    if ep.exists():
+                        cms_path = str(ep)
+                        break
+
+                result = generate_crm_pages(
+                    profiles=profiles,
+                    transcript_dir=str(Path(files[0]).parent),
+                    analysis_dir="analysis-output",
+                    output_dir="CRM",
+                    speaker_db_path=db_path,
+                    min_calls=2,
+                    cms_store_path=cms_path,
+                    analysis_contexts=analysis_map,
+                )
+
+                total = sum(len(v) for v in result.values())
+                logger.info("CRM generation complete: %d pages (%d people, %d companies, %d interactions)",
+                            total, len(result.get("people", [])), len(result.get("companies", [])), len(result.get("interactions", [])))
+            except Exception as e:
+                logger.warning("CRM generation failed: %s", e)
 
         # Emit results
         if len(contexts) == 1 and not interrupted:

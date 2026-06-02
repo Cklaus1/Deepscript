@@ -42,6 +42,7 @@ class SpeakerProfile:
     name_confidence: float = 0.0
     evidence: list[SpeakerEvidence] = field(default_factory=list)
     role: str | None = None
+    company: str | None = None
     total_calls: int = 0
     total_speaking_seconds: float = 0.0
     topics: list[str] = field(default_factory=list)
@@ -163,7 +164,7 @@ def identify_speakers(
         # Get all cluster IDs in this call
         call_clusters = set()
         for sr in resolved:
-            cid = sr.get("speaker_cluster_id", "")
+            cid = sr.get("speaker_cluster_id", "") or sr.get("local_label", "")
             if not cid:
                 continue
             call_clusters.add(cid)
@@ -1009,6 +1010,8 @@ def _add_contacts_evidence(
                         ))
                         if contact.get("title") and not profile.role:
                             profile.role = f"{contact['title']}" + (f" at {contact['company']}" if contact.get("company") else "")
+                        if contact.get("company") and not profile.company:
+                            profile.company = contact["company"]
                         profile_matched = True
 
                 # First-name-only match (lower confidence, only if evidence is a single word

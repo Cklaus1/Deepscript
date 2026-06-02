@@ -186,32 +186,41 @@ def speakers(
             contacts_provider=contacts,
         )
 
-        from deepscript.integrations.minotes import generate_contact_pages, generate_contacts_summary
+        from deepscript.integrations.minotes import generate_crm_pages
 
-        output_dir = name_or_id or "CRM/Contacts"
+        output_dir = name_or_id or "CRM"
         analysis_dir = None
         for cd in [Path("analysis-output"), Path(transcripts).parent / "analysis-output"]:
             if cd.exists():
                 analysis_dir = str(cd)
                 break
 
-        pages = generate_contact_pages(
-            profiles, transcripts,
+        # Look for CMS store path
+        cms_path = None
+        for ep in [Path("CMS"), Path(transcripts).parent / "CMS"]:
+            if ep.exists():
+                cms_path = str(ep)
+                break
+
+        result = generate_crm_pages(
+            profiles=profiles,
+            transcript_dir=transcripts,
             analysis_dir=analysis_dir,
             output_dir=output_dir,
             speaker_db_path=db_path,
             min_calls=2,
+            cms_store_path=cms_path,
         )
 
-        index = generate_contacts_summary(profiles, output_dir)
-        index_path = Path(output_dir) / "_Index.md"
-        with open(index_path, "w") as f:
-            f.write(index)
-        pages.append(index_path)
-
-        cli_ctx.console.print(f"[green]Generated {len(pages)} contact pages in {output_dir}/[/green]")
+        total = sum(len(v) for v in result.values())
+        cli_ctx.console.print(
+            f"[green]Generated {total} CRM pages "
+            f"({len(result.get('people', []))} people, "
+            f"{len(result.get('companies', []))} companies, "
+            f"{len(result.get('interactions', []))} interactions)[/green]"
+        )
         if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET):
-            emit({"pages": [str(p) for p in pages], "count": len(pages), "output_dir": output_dir}, cli_ctx)
+            emit({"crm": {k: [str(p) for p in v] for k, v in result.items()}, "count": total, "output_dir": output_dir}, cli_ctx)
 
     elif action == "dedup":
         if not speaker_db and not transcripts:
