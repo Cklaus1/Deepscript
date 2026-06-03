@@ -46,6 +46,10 @@ class AnalysisContext:
     calendar_context: CalendarContext | None = None
     tags: dict[str, Any] = field(default_factory=dict)
     json_result: dict[str, Any] = field(default_factory=dict)
+    # True when an LLM was configured but one or more calls failed (exhausted
+    # retries), so this result is degraded rule-based output. Callers defer
+    # recording it as "completed" so --new-only retries it on the next pass.
+    llm_failed: bool = False
 
 
 # --- Helpers ---
@@ -80,6 +84,31 @@ def _save_output(file_path: Path, result: dict[str, Any], out_path: Path) -> Non
             json.dump(result, f, indent=2, ensure_ascii=False, default=str)
     except (PermissionError, OSError) as e:
         logger.warning("Failed to save output for %s: %s", file_path, e)
+
+
+def _record_result(
+    ac: AnalysisContext,
+    fp: Path,
+    manifest: "ProcessingManifest | None",
+    output_dir: str | None,
+) -> bool:
+    """Record one analysis result. Returns True if it was a clean (LLM-complete
+    or non-LLM) success, False if it was deferred due to LLM failure.
+
+    When the LLM was configured but failed, the output is degraded rule-based
+    only — we record it "failed" and skip saving so the next --new-only pass
+    retries it instead of baking in the low-quality result.
+    """
+    if ac.llm_failed:
+        logger.warning("LLM failed for %s — deferring (will retry next run)", fp.name)
+        if manifest:
+            manifest.record(fp, "failed")
+        return False
+    if manifest:
+        manifest.record(fp, "completed", call_type=ac.classification.call_type)
+    if output_dir:
+        _save_output(fp, ac.json_result, Path(output_dir))
+    return True
 
 
 # --- Speaker identification (post-analysis) ---
@@ -178,6 +207,11 @@ def _analyze_single(
 ) -> AnalysisContext | None:
     """Analyze a single transcript. Thread-safe."""
     start_time = time.time()
+
+    # Track LLM failures for just this file (thread-local on the shared provider)
+    # so we can tell degraded rule-based output apart from a clean LLM run.
+    if llm is not None:
+        llm.reset_failures()
 
     try:
         transcript = _load_transcript(file_path)
@@ -291,6 +325,7 @@ def _analyze_single(
         file_path=file_path, transcript=transcript, classification=classification,
         communication=communication, topics=topics, analysis=analysis,
         calendar_context=calendar_context, tags=tags, json_result=json_result,
+        llm_failed=(llm is not None and llm.failure_count > 0),
     )
 
 
@@ -344,11 +379,8 @@ async def _analyze_parallel(
 
         async with lock:
             if ac:
-                contexts.append(ac)
-                if manifest:
-                    manifest.record(fp, "completed", call_type=ac.classification.call_type)
-                if output_dir:
-                    _save_output(fp, ac.json_result, Path(output_dir))
+                if _record_result(ac, fp, manifest, output_dir):
+                    contexts.append(ac)
             else:
                 if manifest:
                     manifest.record(fp, "failed")
@@ -478,11 +510,8 @@ def analyze(
                         cms_enabled=cms or settings.cms.enabled,
                     )
                     if ac:
-                        contexts.append(ac)
-                        if manifest:
-                            manifest.record(fp, "completed", call_type=ac.classification.call_type)
-                        if output_dir:
-                            _save_output(fp, ac.json_result, Path(output_dir))
+                        if _record_result(ac, fp, manifest, output_dir):
+                            contexts.append(ac)
                     else:
                         if manifest:
                             manifest.record(fp, "failed")
@@ -626,17 +655,14 @@ def _process_sequential_with_progress(
                 cms_enabled=cms or settings.cms.enabled,
             )
 
-            if ac:
+            if ac and _record_result(ac, fp, manifest, output_dir):
                 contexts.append(ac)
-                if manifest:
-                    manifest.record(fp, "completed", call_type=ac.classification.call_type)
-                if output_dir:
-                    _save_output(fp, ac.json_result, Path(output_dir))
                 progress.update(task, status=f"[green]{ac.classification.call_type}[/green]")
             else:
-                if manifest:
+                if not ac and manifest:
                     manifest.record(fp, "failed")
-                progress.update(task, status="[red]failed[/red]")
+                status = "[yellow]llm-failed, deferred[/yellow]" if ac else "[red]failed[/red]"
+                progress.update(task, status=status)
 
             progress.advance(task)
 

@@ -105,6 +105,23 @@ class LLMProvider:
                 _limiters[config.provider] = _RateLimiter(config.rate_limit_rpm)
         self._client: Any = None
         self._async_client: Any = None
+        # Per-thread count of LLM calls that exhausted retries and fell back to
+        # rule-based. Lets callers tell "LLM ran" from "LLM failed, degraded
+        # output" so they can defer recording the file as done. Thread-local
+        # because parallel analysis runs each file in its own worker thread.
+        self._failures = threading.local()
+
+    def reset_failures(self) -> None:
+        """Reset this thread's LLM-failure counter (call before a unit of work)."""
+        self._failures.count = 0
+
+    @property
+    def failure_count(self) -> int:
+        """LLM failures (exhausted retries) on this thread since the last reset."""
+        return getattr(self._failures, "count", 0)
+
+    def _note_failure(self) -> None:
+        self._failures.count = getattr(self._failures, "count", 0) + 1
 
     @staticmethod
     def create(config: LLMConfig) -> Optional["LLMProvider"]:
@@ -241,8 +258,10 @@ class LLMProvider:
                                    max_retries, self.config.provider, e)
                 else:
                     logger.exception("Unexpected LLM error (%s): %s", self.config.provider, e)
+                self._note_failure()
                 return None
 
+        self._note_failure()
         return None
 
     # --- Async completion with retry ---
@@ -286,8 +305,10 @@ class LLMProvider:
                     await asyncio.sleep(wait)
                     continue
                 logger.warning("Async LLM failed (%s): %s", self.config.provider, e)
+                self._note_failure()
                 return None
 
+        self._note_failure()
         return None
 
     async def complete_json_async(

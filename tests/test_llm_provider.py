@@ -184,3 +184,50 @@ def test_openai_with_custom_base_url():
     config = LLMConfig(provider="openai", model="gpt-4", base_url="https://my-proxy.com/v1", api_key="test")
     provider = LLMProvider.create(config)
     assert provider is not None
+
+
+def test_nim_prefers_nvidia_key_over_openai_key():
+    """Regression: NIM must use NVIDIA_API_KEY even when OPENAI_API_KEY is set.
+
+    A shared .env sourced in cron put OPENAI_API_KEY in the environment, which
+    was sent to NIM's endpoint and 401'd. The provider-specific key must win.
+    """
+    config = LLMConfig(provider="nim", model="meta/llama-3.1-8b-instruct")
+    provider = LLMProvider(config)
+    with patch.dict("os.environ", {"NVIDIA_API_KEY": "nvidia-key", "OPENAI_API_KEY": "openai-key"}):
+        with patch("openai.OpenAI") as mock_openai:
+            provider._build_client(async_mode=False)
+    assert mock_openai.call_args.kwargs["api_key"] == "nvidia-key"
+
+
+def test_failure_counter_increments_on_llm_error():
+    """A failed LLM call (exhausted retries) bumps the thread's failure count."""
+    config = LLMConfig(provider="claude", max_retries=1)
+    provider = LLMProvider(config)
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = Exception("API error")
+    provider._client = mock_client
+
+    provider.reset_failures()
+    assert provider.failure_count == 0
+    assert provider.complete("test") is None
+    assert provider.failure_count == 1
+    # A second failure accumulates
+    assert provider.complete("test") is None
+    assert provider.failure_count == 2
+
+
+def test_failure_counter_not_incremented_on_success():
+    """A successful LLM call leaves the failure count at zero."""
+    config = LLMConfig(provider="claude", model="claude-sonnet-4-6")
+    provider = LLMProvider(config)
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text="ok")]
+    mock_response.usage = MagicMock(input_tokens=1, output_tokens=1)
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+    provider._client = mock_client
+
+    provider.reset_failures()
+    assert provider.complete("test") == "ok"
+    assert provider.failure_count == 0
