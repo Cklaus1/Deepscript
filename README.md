@@ -237,7 +237,7 @@ Tools: `deepscript_analyze`, `deepscript_classify`, `deepscript_list_types`
 ```bash
 pip install -e ".[dev]"        # Install with dev deps
 pip install -e ".[dev,llm]"    # Include Anthropic SDK
-pytest                          # Run tests (173 tests)
+pytest                          # Run tests (235 tests)
 pytest -k "test_classify"      # Run specific tests
 make clean                      # Remove build artifacts
 ```

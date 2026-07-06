@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DeepScript is a **Transcript Intelligence Engine** — a separate package from AudioScript. AudioScript handles audio-to-text transcription; DeepScript performs text-to-intelligence analysis on transcripts from any source (AudioScript, Zoom, Otter, manual).
 
-**Status:** Feature-complete. PRD in `PRD-deepscript.md`. 165 tests passing.
+**Status:** Feature-complete. PRD in `PRD-deepscript.md`. 235 tests passing.
 
 ## Architecture
 
@@ -95,7 +95,7 @@ Configuration via `.deepscript.yaml` with sections for: classification, topics, 
 ```bash
 pip install -e ".[dev]"              # Install with dev deps
 pip install -e ".[dev,llm]"          # Install with LLM support (anthropic)
-pytest                                # Run all tests (165 tests)
+pytest                                # Run all tests (235 tests)
 pytest tests/test_pmf_analyzer.py    # Run single test file
 pytest -k "test_classify"            # Run tests matching pattern
 deepscript --version                 # Verify CLI
