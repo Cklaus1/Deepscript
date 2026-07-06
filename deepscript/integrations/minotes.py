@@ -8,10 +8,11 @@ Action items are embedded as checkboxes on person pages and indexed in CRM/_Task
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -94,13 +95,32 @@ def generate_crm_pages(
         fp.write_text(page, encoding="utf-8")
         written["companies"].append(fp)
 
-    # Write interaction pages
+    # Write interaction pages — one per unique call, not per (speaker, call).
+    # call_details is keyed by speaker cluster_id, so the same call appears once
+    # per participant; dedup by the call's source file to avoid redundant writes
+    # (and an inflated count) since interaction pages are call-level, not per-speaker.
+    seen_calls: set[str] = set()
+    unique_calls: list[dict[str, Any]] = []
     for call in call_details.values():
         if isinstance(call, list):
             for c in call:
-                fp = _write_interaction_page(c, output_path, analysis_contexts)
-                if fp:
-                    written["interactions"].append(fp)
+                call_key = c.get("file") or f"{c.get('date', '')}-{c.get('title', '')}"
+                if call_key in seen_calls:
+                    continue
+                seen_calls.add(call_key)
+                unique_calls.append(c)
+
+    # Detect distinct calls whose sanitized {date}-{title} collapse to the same
+    # filename (e.g. two "Fusen UX" calls on the same day). Without this they
+    # silently overwrite each other on disk. Disambiguate only the colliders.
+    base_counts = Counter(_interaction_basename(c) for c in unique_calls)
+    for c in unique_calls:
+        disambiguate = base_counts[_interaction_basename(c)] > 1
+        fp = _write_interaction_page(
+            c, output_path, analysis_contexts, disambiguate=disambiguate
+        )
+        if fp:
+            written["interactions"].append(fp)
 
     # Write global task index
     _write_task_index(call_details, output_path)
@@ -415,15 +435,28 @@ def _render_company_page(company: str, people: list[str]) -> str:
 # Interaction page
 # ---------------------------------------------------------------------------
 
+def _interaction_basename(call: dict[str, Any]) -> str:
+    """Sanitized {date}-{title} stem for a call's interaction page (no suffix)."""
+    date = call.get("date", "unknown")
+    safe_date = date.replace("-", "") if date else "unknown"
+    safe_title = _sanitize(call.get("title", "call"))[:40]
+    return f"{safe_date}-{safe_title}"
+
+
 def _write_interaction_page(
     call: dict[str, Any],
     output_path: Path,
     analysis_contexts: dict[str, Any] | None = None,
+    disambiguate: bool = False,
 ) -> Path | None:
-    date = call.get("date", "unknown")
-    safe_date = date.replace("-", "") if date else "unknown"
-    safe_title = _sanitize(call.get("title", "call"))[:40]
-    filename = f"{safe_date}-{safe_title}.md"
+    basename = _interaction_basename(call)
+    # When multiple distinct calls share a basename (same day + title prefix),
+    # append a short stable hash of the source file so neither overwrites the other.
+    if disambiguate:
+        seed = call.get("file") or f"{call.get('summary', '')[:80]}"
+        suffix = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:6]
+        basename = f"{basename}-{suffix}"
+    filename = f"{basename}.md"
     fp = output_path / "interactions" / filename
     fp.parent.mkdir(parents=True, exist_ok=True)
 
