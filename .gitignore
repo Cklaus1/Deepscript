@@ -41,3 +41,6 @@ htmlcov/
 # Claude Code local
 .claude/
 memory/
+
+# Raw transcript data (contains personal conversation data)
+data/raw/
