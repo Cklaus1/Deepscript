@@ -65,10 +65,10 @@ class SalesAnalyzer(BaseAnalyzer):
         desc = METHODOLOGY_DESCRIPTIONS.get(self.methodology, "")
         instructions = f"This is a sales call. Score using {self.methodology.upper()}:\n{desc}\nAlso identify buying signals, risk signals, and call phases."
         schema = (
-            '"methodology_score": {{"methodology": "...", "scores": {{}}, "total_score": 0, "strengths": [], "gaps": []}},\n'
-            '  "buying_signals": [{{"signal": "...", "quote": "...", "strength": "strong|moderate|weak"}}],\n'
-            '  "risk_signals": [{{"signal": "...", "quote": "...", "severity": "high|medium|low"}}],\n'
-            '  "call_phases": [{{"phase": "Intro|Discovery|Demo|Close", "summary": "..."}}]'
+            '"methodology_score": {"methodology": "...", "scores": {}, "total_score": 0, "strengths": [], "gaps": []}},\n'
+            '  "buying_signals": [{"signal": "...", "quote": "...", "strength": "strong|moderate|weak"}],\n'
+            '  "risk_signals": [{"signal": "...", "quote": "...", "severity": "high|medium|low"}],\n'
+            '  "call_phases": [{"phase": "Intro|Discovery|Demo|Close", "summary": "..."}]'
         )
         return instructions, schema
 

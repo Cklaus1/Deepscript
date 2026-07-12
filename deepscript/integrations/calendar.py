@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -20,15 +20,11 @@ class CalendarContext:
 
     subject: str = ""
     organizer: str = ""
-    attendees: list[str] = None
+    attendees: list[str] = field(default_factory=list)
     recurring: bool = False
     series_name: str = ""
     location: str = ""
     body_preview: str = ""
-
-    def __post_init__(self) -> None:
-        if self.attendees is None:
-            self.attendees = []
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,9 +69,13 @@ def get_calendar_context(
     else:
         rec_time = recording_time
 
+    if rec_time.tzinfo is None:
+        rec_time = rec_time.astimezone()
+
+    rec_time_utc = rec_time.astimezone(timezone.utc)
     window = timedelta(minutes=config.time_window)
-    start = rec_time - window
-    end = rec_time + timedelta(seconds=duration_seconds) + window
+    start = rec_time_utc - window
+    end = rec_time_utc + timedelta(seconds=duration_seconds) + window
 
     if config.provider == "ms365":
         return _lookup_ms365(start, end)
@@ -87,8 +87,8 @@ def get_calendar_context(
 
 def _lookup_ms365(start: datetime, end: datetime) -> CalendarContext | None:
     """Look up calendar event via ms365-cli."""
-    start_str = start.strftime("%Y-%m-%dT%H:%M:%S")
-    end_str = end.strftime("%Y-%m-%dT%H:%M:%S")
+    start_str = start.astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+    end_str = end.astimezone().strftime("%Y-%m-%dT%H:%M:%S")
 
     try:
         result = subprocess.run(
@@ -115,8 +115,11 @@ def _lookup_ms365(start: datetime, end: datetime) -> CalendarContext | None:
     except subprocess.TimeoutExpired:
         logger.warning("ms365 calendar lookup timed out")
         return None
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning("Calendar lookup error: %s", e)
+    except json.JSONDecodeError as e:
+        logger.warning("ms365 calendar returned invalid JSON: %s", e)
+        return None
+    except Exception:
+        logger.exception("Unexpected error in ms365 calendar lookup")
         return None
 
 
@@ -183,8 +186,11 @@ def _lookup_google(start: datetime, end: datetime) -> CalendarContext | None:
     except subprocess.TimeoutExpired:
         logger.warning("gws calendar lookup timed out")
         return None
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning("Calendar lookup error: %s", e)
+    except json.JSONDecodeError as e:
+        logger.warning("gws calendar returned invalid JSON: %s", e)
+        return None
+    except Exception:
+        logger.exception("Unexpected error in gws calendar lookup")
         return None
 
 

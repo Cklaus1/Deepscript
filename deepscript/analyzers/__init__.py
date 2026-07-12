@@ -54,12 +54,20 @@ def discover_analyzer_classes() -> dict[str, type[BaseAnalyzer]]:
                         instance = attr.__new__(attr)
                         types = instance.supported_types
                         for ct in types:
-                            if ct not in registry:
-                                registry[ct] = attr
-                    except Exception:
-                        pass
+                            if ct in registry:
+                                logger.warning(
+                                    "call_type '%s' already registered by %s; "
+                                    "overriding with %s",
+                                    ct, registry[ct].__name__, attr.__name__,
+                                )
+                            registry[ct] = attr
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to inspect supported_types for %s: %s",
+                            attr.__name__, e,
+                        )
         except Exception as e:
-            logger.debug("Skipped analyzer module %s: %s", modname, e)
+            logger.warning("Skipped analyzer module %s: %s", modname, e)
 
     _discovered = registry
     return registry

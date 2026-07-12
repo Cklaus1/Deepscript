@@ -24,6 +24,7 @@ class OutputFormat(str, Enum):
 class ExitCode:
     SUCCESS = 0
     ANALYSIS_ERROR = 1
+    ANALYSIS_FAILURE = 5
     AUTH_ERROR = 2
     VALIDATION_ERROR = 3
     INTERNAL_ERROR = 4

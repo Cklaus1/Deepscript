@@ -164,8 +164,10 @@ def identify_speakers(
         # Get all cluster IDs in this call
         call_clusters = set()
         for sr in resolved:
-            cid = sr.get("speaker_cluster_id", "") or sr.get("local_label", "")
+            cid = sr.get("speaker_cluster_id") or f"{call_id}:{sr.get('local_label', '')}"
             if not cid:
+                continue
+            if cid in call_clusters:
                 continue
             call_clusters.add(cid)
 
@@ -280,14 +282,7 @@ def identify_speakers(
         # 1. Cross-speaker name references
         # Detect account owner to reduce noise (they're addressed in every call)
         if cached_calendar_events and not _owner_first:
-            from collections import Counter as _Counter
-            _org_counts = _Counter()
-            for _e in cached_calendar_events:
-                _org = (_e.get("organizer", {}).get("emailAddress", {}).get("name") or "").strip()
-                if _org:
-                    _org_counts[_org] += 1
-            if _org_counts:
-                _owner_first = _org_counts.most_common(1)[0][0].split()[0].lower()
+            _owner_first, _ = _detect_account_owner(cached_calendar_events)
 
         cross_ref_count = 0
         for file_path, transcript in transcripts:
@@ -423,6 +418,8 @@ def identify_speakers(
             for file_path, transcript in transcripts:
                 ct = transcript.get("metadata", {}).get("audio", {}).get("format_tags", {}).get("creation_time", "")
                 if not ct:
+                    ct = transcript.get("metadata", {}).get("audio", {}).get("creation_time", "")
+                if not ct:
                     continue
                 try:
                     rec_dt = datetime.fromisoformat(ct.replace("Z", "+00:00"))
@@ -446,14 +443,7 @@ def identify_speakers(
 
         # Detect account owner full name for filtering
         if cached_calendar_events and not _owner_full:
-            from collections import Counter as _Ctr2
-            _org2 = _Ctr2()
-            for _e in cached_calendar_events:
-                _o = (_e.get("organizer", {}).get("emailAddress", {}).get("name") or "").strip()
-                if _o:
-                    _org2[_o] += 1
-            if _org2:
-                _owner_full = _org2.most_common(1)[0][0].lower()
+            _, _owner_full = _detect_account_owner(cached_calendar_events)
 
         # 6. Self-identification in opening segments
         self_id_count = 0
@@ -571,7 +561,7 @@ def identify_speakers(
             if panel_results:
                 logger.info("LLM expert panel: %d speakers identified", len(panel_results))
         except Exception as e:
-            logger.debug("LLM panel skipped: %s", e)
+            logger.warning("LLM panel failed: %s", e, exc_info=True)
 
         # Label remaining unknowns with descriptive tags (separate try block)
         try:
@@ -590,7 +580,7 @@ def identify_speakers(
             if labels:
                 logger.info("LLM labeling: %d speakers labeled", len(labels))
         except Exception as e:
-            logger.debug("LLM labeling skipped: %s", e)
+            logger.warning("LLM labeling failed: %s", e, exc_info=True)
 
     # Deduplicate topics
     for profile in profiles.values():
@@ -764,13 +754,8 @@ def _add_calendar_evidence_cached(
     # Detect account owner: the most frequent organizer across events.
     # This person appears in most events and should be excluded from
     # attendee matching to avoid false positive speaker identification.
-    from collections import Counter
-    org_counts = Counter()
-    for e in cached_events:
-        org = (e.get("organizer", {}).get("emailAddress", {}).get("name") or "").strip()
-        if org:
-            org_counts[org] += 1
-    account_owner = org_counts.most_common(1)[0][0].lower() if org_counts else ""
+    _owner_first, _owner_full = _detect_account_owner(cached_events)
+    account_owner = _owner_full
     if account_owner:
         logger.info("Calendar account owner detected: %s (excluded from attendee matching)", account_owner)
 
@@ -1037,17 +1022,37 @@ def _add_contacts_evidence(
         logger.warning("Contact list lookup failed: %s", e)
 
 
+def _detect_account_owner(events: list[dict]) -> tuple[str, str]:
+    """Detect the calendar account owner from organizer frequency.
+
+    Returns (first_name_lower, full_name_lower). Empty strings if no events.
+    """
+    from collections import Counter
+    org_counts = Counter()
+    for e in events:
+        org = (e.get("organizer", {}).get("emailAddress", {}).get("name") or "").strip()
+        if org:
+            org_counts[org] += 1
+    if not org_counts:
+        return ("", "")
+    full = org_counts.most_common(1)[0][0]
+    return (full.split()[0].lower(), full.lower())
+
+
 def _names_match(name1: str, name2: str) -> bool:
     """Check if two names likely refer to the same person."""
     n1 = name1.lower().strip()
     n2 = name2.lower().strip()
+    if not n1 or not n2:
+        return False
     if n1 == n2:
         return True
     # First name match
-    if n1.split()[0] == n2.split()[0]:
+    if n1.split() and n2.split() and n1.split()[0] == n2.split()[0]:
         return True
-    # One contains the other
-    if n1 in n2 or n2 in n1:
+    # Token subset (one is a subset of the other's words)
+    s1, s2 = set(n1.split()), set(n2.split())
+    if s1 and s2 and (s1 <= s2 or s2 <= s1):
         return True
     return False
 
@@ -1143,6 +1148,7 @@ def _is_upgrade(existing_name: str | None, new_name: str, new_confidence: float)
     - "Adam" → "Adam Fuller" (more specific)
     - "Adam (possible)" → "Adam (likely)" (higher confidence)
     - "Adam (likely)" → "Adam Fuller" (qualifier removed + full name)
+    - Unqualified existing name requires higher confidence to replace
 
     NOT upgrades:
     - "Adam Fuller" → "Adam" (less specific)
@@ -1174,6 +1180,10 @@ def _is_upgrade(existing_name: str | None, new_name: str, new_confidence: float)
             new_qual = rank
     if clean_existing.lower() == clean_new.lower() and new_qual > existing_qual:
         return True
+
+    # Require higher confidence to replace an unqualified existing name
+    if "(" not in existing_name and new_confidence < 0.80:
+        return False
 
     return False
 
@@ -1213,66 +1223,52 @@ def writeback_to_speaker_db(
 
     for cid, profile in profiles.items():
         if not profile.likely_name or profile.name_confidence < min_confidence:
-            if profile.likely_name:
-                changes["skipped_low_confidence"].append({
-                    "cluster_id": cid, "name": profile.likely_name,
-                    "confidence": profile.name_confidence,
-                })
             continue
 
         if cid not in identities:
             # Create a new DB entry for speakers found in transcripts but not in the DB.
             # These are typically brief speakers or diarization artifacts without embeddings.
-            if profile.name_confidence >= min_confidence:
-                full_name = profile.best_full_name
-                if profile.name_confidence >= 0.80:
-                    candidate_name = full_name or profile.likely_name
-                    candidate_status = "deepscript_confident"
-                elif profile.name_confidence >= 0.60:
-                    candidate_name = profile.likely_name
-                    candidate_status = "deepscript_likely"
-                else:
-                    candidate_name = profile.likely_name
-                    candidate_status = "deepscript_possible"
-
-                new_identity = {
-                    "speaker_cluster_id": cid,
-                    "canonical_name": candidate_name,
-                    "aliases": [],
-                    "status": "unknown",
-                    "embedding_centroid": [],
-                    "sample_count": 0,
-                    "first_seen": now,
-                    "last_seen": now,
-                    "total_calls": profile.total_calls,
-                    "total_speaking_seconds": profile.total_speaking_seconds,
-                    "typical_co_speakers": list(profile.co_speakers.keys())[:10],
-                    "created_from": "deepscript_identification",
-                    "updated_at": now,
-                    "deepscript_status": candidate_status,
-                    "deepscript_confidence": round(profile.name_confidence, 3),
-                    "deepscript_role": profile.role,
-                    "deepscript_evidence_count": len(profile.evidence),
-                    "deepscript_full_name": full_name,
-                    "deepscript_updated_at": now,
-                }
-                _add_name_history(new_identity, candidate_name, profile.name_confidence,
-                                  candidate_status, profile, now)
-                identities[cid] = new_identity
-                changes["not_in_db"].append({
-                    "cluster_id": cid,
-                    "name": candidate_name,
-                    "confidence": profile.name_confidence,
-                    "calls": profile.total_calls,
-                    "action": "created",
-                })
+            full_name = profile.best_full_name
+            candidate_name = profile.likely_name
+            if profile.name_confidence >= 0.80:
+                candidate_name = full_name or candidate_name
+                candidate_status = "deepscript_confident"
+            elif profile.name_confidence >= 0.60:
+                candidate_status = "deepscript_likely"
             else:
-                changes["not_in_db"].append({
-                    "cluster_id": cid,
-                    "name": profile.likely_name,
-                    "confidence": profile.name_confidence,
-                    "action": "skipped_low_confidence",
-                })
+                candidate_status = "deepscript_possible"
+
+            new_identity = {
+                "speaker_cluster_id": cid,
+                "canonical_name": candidate_name,
+                "aliases": [],
+                "status": "unknown",
+                "embedding_centroid": [],
+                "sample_count": 0,
+                "first_seen": now,
+                "last_seen": now,
+                "total_calls": profile.total_calls,
+                "total_speaking_seconds": profile.total_speaking_seconds,
+                "typical_co_speakers": list(profile.co_speakers.keys())[:10],
+                "created_from": "deepscript_identification",
+                "updated_at": now,
+                "deepscript_status": candidate_status,
+                "deepscript_confidence": round(profile.name_confidence, 3),
+                "deepscript_role": profile.role,
+                "deepscript_evidence_count": len(profile.evidence),
+                "deepscript_full_name": full_name,
+                "deepscript_updated_at": now,
+            }
+            _add_name_history(new_identity, candidate_name, profile.name_confidence,
+                              candidate_status, profile, now)
+            identities[cid] = new_identity
+            changes["not_in_db"].append({
+                "cluster_id": cid,
+                "name": candidate_name,
+                "confidence": profile.name_confidence,
+                "calls": profile.total_calls,
+                "action": "created",
+            })
             continue
 
         identity = identities[cid]
@@ -1650,6 +1646,11 @@ def soft_merge_speakers(
         logger.info("Already linked: %s → %s", merge_id, keep_id)
         return True
 
+    # Refuse re-linking an already-linked cluster
+    if b.get("linked_to"):
+        logger.warning("Refusing re-link: %s is already linked to %s", merge_id, b["linked_to"])
+        return False
+
     # Prevent circular links
     if a.get("linked_to"):
         logger.warning("Cannot link: %s is already linked to %s", keep_id, a["linked_to"])
@@ -1867,8 +1868,9 @@ def _hard_merge(
         a.get("total_speaking_seconds", 0) + b.get("total_speaking_seconds", 0)
     )
 
-    if b.get("first_seen", "") < a.get("first_seen", "z"):
-        a["first_seen"] = b["first_seen"]
+    b_fs = b.get("first_seen", "�")
+    if b_fs < a.get("first_seen", "z"):
+        a["first_seen"] = b_fs
     if b.get("last_seen", "") > a.get("last_seen", ""):
         a["last_seen"] = b["last_seen"]
 

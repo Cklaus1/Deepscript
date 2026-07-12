@@ -20,19 +20,20 @@ def list_benchmark_runs() -> list[dict[str, Any]]:
 
     runs: list[dict[str, Any]] = []
     for f in sorted(BENCHMARK_DIR.glob("benchmark-*.json"), reverse=True):
-        try:
-            with open(f) as fh:
-                data = json.load(fh)
-            runs.append({
-                "file": f.name,
-                "path": str(f),
-                "timestamp": data.get("timestamp", ""),
-                "models_tested": data.get("models_tested", 0),
-                "top_model": data["results"][0]["model"] if data.get("results") else "",
-                "top_quality": data["results"][0]["avg_quality"] if data.get("results") else 0,
-            })
-        except (json.JSONDecodeError, KeyError, IndexError):
-            continue
+        if f.name != "benchmark-latest.json":
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                runs.append({
+                    "file": f.name,
+                    "path": str(f),
+                    "timestamp": data.get("timestamp", ""),
+                    "models_tested": data.get("models_tested", 0),
+                    "top_model": data["results"][0]["model"] if data.get("results") else "",
+                    "top_quality": data["results"][0]["avg_quality"] if data.get("results") else 0,
+                })
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
 
     return runs
 
@@ -125,22 +126,23 @@ def model_trend(model_id: str) -> list[dict[str, Any]]:
 
     points: list[dict[str, Any]] = []
     for f in sorted(BENCHMARK_DIR.glob("benchmark-*.json")):
-        try:
-            with open(f) as fh:
-                data = json.load(fh)
-            for r in data.get("results", []):
-                if r["model"] == model_id:
-                    points.append({
-                        "timestamp": data.get("timestamp", ""),
-                        "quality": r["avg_quality"],
-                        "latency_ms": r.get("avg_latency_ms", 0),
-                        "tier": r.get("tier", 0),
-                        "cost_usd": r.get("total_cost_usd", 0),
-                        "success_rate": r.get("success_rate", 0),
-                    })
-                    break
-        except (json.JSONDecodeError, KeyError):
-            continue
+        if f.name != "benchmark-latest.json":
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                for r in data.get("results", []):
+                    if r["model"] == model_id:
+                        points.append({
+                            "timestamp": data.get("timestamp", ""),
+                            "quality": r["avg_quality"],
+                            "latency_ms": r.get("avg_latency_ms", 0),
+                            "tier": r.get("tier", 0),
+                            "cost_usd": r.get("total_cost_usd", 0),
+                            "success_rate": r.get("success_rate", 0),
+                        })
+                        break
+            except (json.JSONDecodeError, KeyError):
+                continue
 
     return points
 
@@ -159,9 +161,9 @@ def format_history_markdown(runs: list[dict[str, Any]]) -> str:
         "|---|------|--------|-----------|-------------|",
     ]
     for i, run in enumerate(runs, 1):
-        ts = run["timestamp"][:19] if run.get("timestamp") else "?"
+        ts = run.get("timestamp", "")[:19] if run.get("timestamp") else "?"
         lines.append(
-            f"| {i} | {ts} | {run['models_tested']} | {run['top_model']} | {run['top_quality']}/10 |"
+            f"| {i} | {ts} | {run.get('models_tested', 0)} | {run.get('top_model', '?')} | {run.get('top_quality', 0)}/10 |"
         )
 
     return "\n".join(lines)
@@ -172,8 +174,8 @@ def format_comparison_markdown(comparison: dict[str, Any]) -> str:
     lines = [
         "# Benchmark Comparison",
         "",
-        f"**Baseline:** {comparison['baseline'][:19]}",
-        f"**Current:** {comparison['current'][:19]}",
+        f"**Baseline:** {comparison.get('baseline', '')[:19]}",
+        f"**Current:** {comparison.get('current', '')[:19]}",
         "",
         f"**Models compared:** {comparison['models_compared']} | "
         f"Improved: {comparison['improved']} | "

@@ -6,7 +6,7 @@ from typing import Optional
 
 import typer
 
-from deepscript.cli.output import CLIContext, emit
+from deepscript.cli.output import CLIContext, OutputFormat, emit
 from deepscript.cms_bridge.dashboard import generate_pmf_dashboard
 from deepscript.cms_bridge.playbook import generate_playbook
 from deepscript.config.settings import get_settings
@@ -15,6 +15,7 @@ from deepscript.config.settings import get_settings
 def playbook(
     call_type: str = typer.Argument(help="Call type to generate playbook for (e.g., sales-call, discovery-call)."),
     config_file: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path."),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Generate a playbook from analyzed call episodes in CMS."""
@@ -23,7 +24,10 @@ def playbook(
     store_path = settings.cms.store_path
 
     md = generate_playbook(call_type, store_path)
-    print(md)
+    if cli_ctx.format in (OutputFormat.JSON, OutputFormat.QUIET, OutputFormat.YAML):
+        emit({"playbook": md}, cli_ctx)
+    else:
+        print(md)
 
 
 def dashboard(

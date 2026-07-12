@@ -197,7 +197,7 @@ def compile_corrections(corrections: dict[str, str]) -> tuple[re.Pattern | None,
     sorted_items = sorted(corrections.items(), key=lambda x: -len(x[0]))
     # Build alternation pattern
     escaped = [re.escape(k) for k, _ in sorted_items]
-    pattern = re.compile("|".join(escaped), re.IGNORECASE)
+    pattern = re.compile(r"\b(?:" + "|".join(escaped) + r")\b", re.IGNORECASE)
     return pattern, corrections
 
 

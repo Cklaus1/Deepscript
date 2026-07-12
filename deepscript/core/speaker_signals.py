@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -113,111 +112,7 @@ def extract_cross_speaker_references(
     return results
 
 
-# --- 2. Relationship Graph ---
-
-@dataclass
-class Relationship:
-    """A relationship between the speaker and another person."""
-    name: str
-    relation: str  # wife, husband, dad, mom, son, daughter, assistant, boss, etc.
-    cluster_id: str = ""  # If we can map to a cluster
-    mentions: int = 1
-
-_RELATIONSHIP_PATTERNS = [
-    # "my wife Ingrid", "my husband John", "my son Will"
-    re.compile(r'\bmy\s+(wife|husband|partner|girlfriend|boyfriend|fiancée?|spouse)\s+([A-Z][a-z]+)', re.IGNORECASE),
-    re.compile(r'\bmy\s+(son|daughter|kid|child|brother|sister)\s+([A-Z][a-z]+)', re.IGNORECASE),
-    re.compile(r'\bmy\s+(mom|dad|mother|father|parent)\s+([A-Z][a-z]+)', re.IGNORECASE),
-    re.compile(r'\bmy\s+(assistant|secretary|associate|partner|boss|manager|attorney|lawyer|accountant|advisor)\s+([A-Z][a-z]+)', re.IGNORECASE),
-    # "Thanks, dad" / "love you, mom" (at end of segment — identifies OTHER speaker)
-    re.compile(r'(?:thanks|thank you|love you|bye|goodbye)\s*[,]?\s*(dad|mom|mother|father)\b', re.IGNORECASE),
-    # "my sister Carrie said", "my brother Mike thinks"
-    re.compile(r'\bmy\s+(sister|brother)\s+([A-Z][a-z]+)', re.IGNORECASE),
-]
-
-
-def extract_relationships(
-    segments: list[dict],
-    speaker_cluster_id: str | None = None,
-) -> list[Relationship]:
-    """Extract relationship signals from transcript text.
-
-    Returns relationships mentioned by the specified speaker (or all speakers).
-    """
-    relationships: dict[str, Relationship] = {}
-
-    for seg in segments:
-        if speaker_cluster_id and seg.get("speaker_cluster_id") != speaker_cluster_id:
-            continue
-
-        text = seg.get("text", "")
-        for pattern in _RELATIONSHIP_PATTERNS:
-            for m in pattern.finditer(text):
-                groups = m.groups()
-                if len(groups) == 2:
-                    relation, name = groups
-                elif len(groups) == 1:
-                    relation = groups[0]
-                    name = relation  # "dad", "mom" — the relation IS the identifier
-                else:
-                    continue
-
-                key = f"{relation.lower()}:{name.lower()}"
-                if key in relationships:
-                    relationships[key].mentions += 1
-                else:
-                    relationships[key] = Relationship(
-                        name=name,
-                        relation=relation.lower(),
-                    )
-
-    return list(relationships.values())
-
-
-def build_relationship_graph(
-    transcripts: list[tuple[Path, dict]],
-) -> dict[str, list[Relationship]]:
-    """Build a relationship graph across all transcripts.
-
-    Returns: {cluster_id: [Relationship, ...]}
-    """
-    graph: dict[str, list[Relationship]] = defaultdict(list)
-
-    for _, transcript in transcripts:
-        segments = transcript.get("segments", [])
-        diar = transcript.get("diarization", {})
-        resolved = diar.get("speakers_resolved", [])
-
-        # Get all cluster IDs in this call
-        cluster_ids = set()
-        for sr in resolved:
-            cid = sr.get("speaker_cluster_id", "")
-            if cid:
-                cluster_ids.add(cid)
-
-        for cid in cluster_ids:
-            rels = extract_relationships(segments, speaker_cluster_id=cid)
-            for rel in rels:
-                # Check if relationship name matches another speaker in this call
-                for other_cid in cluster_ids:
-                    if other_cid == cid:
-                        continue
-                    # Will be matched downstream
-                    rel.cluster_id = ""
-                graph[cid].extend(rels)
-
-    # Deduplicate per cluster
-    for cid in graph:
-        seen = {}
-        for rel in graph[cid]:
-            key = f"{rel.relation}:{rel.name.lower()}"
-            if key in seen:
-                seen[key].mentions += rel.mentions
-            else:
-                seen[key] = rel
-        graph[cid] = list(seen.values())
-
-    return graph
+results: dict[str, Any] = {}
 
 
 # --- 3. Role-to-Speaker Correlation ---
@@ -634,8 +529,13 @@ def match_title_names_to_speakers(
     if not names:
         return []
 
-    # Filter out account owner
-    names = [n for n in names if not (account_owner_name and n.lower().startswith(account_owner_name))]
+    # Filter out account owner (exclude first-name matches and full-name prefixes)
+    owner_first = account_owner_name.split()[0] if account_owner_name else ""
+    names = [n for n in names if not (
+        account_owner_name and (
+            n.lower() == owner_first or account_owner_name.startswith(n.lower())
+        )
+    )]
     if not names:
         return []
 

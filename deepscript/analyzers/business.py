@@ -45,7 +45,7 @@ class BusinessAnalyzer(BaseAnalyzer):
 
     @property
     def supported_types(self) -> list[str]:
-        return ["business-meeting", "standup", "unknown"]
+        return ["business-meeting", "unknown"]
 
     def analyze(self, transcript: dict[str, Any]) -> AnalysisResult:
         # Try single-call combined analysis first (saves 2-3 LLM calls)
@@ -56,6 +56,7 @@ class BusinessAnalyzer(BaseAnalyzer):
                 combined.sections["attendees"] = self._extract_attendees(transcript.get("segments", []))
                 # Enrich action items — if any lack enrichment, re-extract all
                 items = combined.sections.get("action_items", [])
+                items = [i for i in items if isinstance(i, dict)]
                 if items and any(not i.get("importance") for i in items):
                     text = transcript.get("text", "")
                     segments = transcript.get("segments", [])
@@ -130,7 +131,8 @@ class BusinessAnalyzer(BaseAnalyzer):
             prompt = self.llm.render_prompt("action_items", transcript=truncated)
             result = self.llm.complete_json(prompt)
             if result and isinstance(result, list):
-                return [self._normalize_action_item(item) for item in result if item.get("text")]
+                items = [i for i in result if isinstance(i, dict)]
+                return [self._normalize_action_item(item) for item in items if item.get("text")]
 
         # Rule-based fallback
         return self._extract_action_items_rule_based(segments)

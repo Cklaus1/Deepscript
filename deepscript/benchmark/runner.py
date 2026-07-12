@@ -501,7 +501,7 @@ def run_benchmark(
                 len(models), len(task_names), len(transcripts), total_calls, est_minutes)
 
     # Incremental results file — updated after each model completes
-    incremental_path = BENCHMARK_DIR / "benchmark-latest.json"
+    incremental_path = BENCHMARK_DIR / "latest.json"
     BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
     benchmarks: list[ModelBenchmark] = []
 

@@ -49,7 +49,7 @@ class PanelResult:
 
 
 def run_speaker_panel(
-    profiles: dict[str, Any],
+    profiles: dict[str, "SpeakerProfile"],
     transcripts: list[tuple[Path, dict]],
     calendar_events: list[dict] | None,
     contacts: list[dict] | None,
@@ -118,7 +118,7 @@ def run_speaker_panel(
 
         # Find candidates specific to this speaker's calls
         candidates = _find_candidates_for_speaker(
-            cid, profile, transcripts, calendar_events, candidate_pool, account_owner_name
+            cid, profile, transcripts, calendar_events, candidate_pool, account_owner_name, profiles
         )
         if not candidates:
             continue
@@ -171,7 +171,7 @@ def _load_prompt_template() -> str:
 
 
 def _build_candidate_pool(
-    profiles: dict[str, Any],
+    profiles: dict[str, "SpeakerProfile"],
     calendar_events: list[dict] | None,
     contacts: list[dict] | None,
     account_owner_name: str,
@@ -203,6 +203,9 @@ def _build_candidate_pool(
                     continue
                 if name_lower not in pool:
                     pool[name_lower] = {"name": name, "title": "", "company": "", "email": email}
+                else:
+                    # Keep first occurrence (most frequent across events)
+                    pass
 
     # Enrich with contact details
     if contacts:
@@ -229,6 +232,7 @@ def _find_candidates_for_speaker(
     calendar_events: list[dict] | None,
     candidate_pool: dict[str, dict],
     account_owner_name: str,
+    profiles: dict[str, "SpeakerProfile"],
 ) -> list[dict]:
     """Find candidate identities relevant to this specific speaker's calls."""
     from datetime import datetime, timedelta, timezone
@@ -280,9 +284,19 @@ def _find_candidates_for_speaker(
     # Return candidates sorted by frequency (most common attendees across this speaker's calls)
     candidates = []
     seen_names = set()
+    # Build set of already-identified speaker names to exclude
+    identified_names = {
+        p.likely_name.lower().split(" (")[0]
+        for p in profiles.values() if p.likely_name
+    }
     for name, count in speaker_attendees.most_common(15):
         name_lower = name.lower()
+        if name_lower in seen_names:
+            continue
         seen_names.add(name_lower)
+        # Skip already-identified speakers
+        if name_lower in identified_names:
+            continue
         if name_lower in candidate_pool:
             entry = dict(candidate_pool[name_lower])
             entry["meeting_overlap"] = count
@@ -435,7 +449,7 @@ class LabelResult:
 
 
 def label_unknown_speakers(
-    profiles: dict[str, Any],
+    profiles: dict[str, "SpeakerProfile"],
     transcripts: list[tuple[Path, dict]],
     llm: Any,
     min_segments: int = 5,

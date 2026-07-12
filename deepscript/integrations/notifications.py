@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 import subprocess
 from typing import Any
@@ -44,12 +45,19 @@ def send_notifications(
         if not channel.command:
             continue
 
-        # Substitute placeholders with shell-escaped values
+        # Substitute placeholders with shell-escaped values (single-pass)
         command = channel.command
-        command = command.replace("{summary}", shlex.quote(summary[:500]))
-        command = command.replace("{title}", shlex.quote(title))
-        command = command.replace("{user}", shlex.quote(user))
-        command = command.replace("{call_type}", shlex.quote(call_type))
+        values = {
+            "summary": shlex.quote(summary[:500]),
+            "title": shlex.quote(title),
+            "user": shlex.quote(user),
+            "call_type": shlex.quote(call_type),
+        }
+        command = re.sub(
+            r"\{(summary|title|user|call_type)\}",
+            lambda m: values[m.group(1)],
+            command,
+        )
 
         result = _execute_notification(channel.type, command)
         results.append(result)

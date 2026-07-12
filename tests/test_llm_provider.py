@@ -88,23 +88,37 @@ def test_complete_returns_none_on_error():
     assert result is None
 
 
-def test_cost_tracker_records_usage():
-    tracker = CostTracker(budget_limit=10.0)
-    tracker.record("claude-sonnet-4-6", input_tokens=1000, output_tokens=500)
+def test_cost_tracker_records_usage(tmp_path):
+    import deepscript.llm.cost_tracker as ct_mod
+    usage_file = str(tmp_path / "usage.json")
+    orig = ct_mod.USAGE_FILE
+    ct_mod.USAGE_FILE = usage_file
+    try:
+        tracker = CostTracker(budget_limit=10.0)
+        tracker.record("claude-sonnet-4-6", input_tokens=1000, output_tokens=500)
 
-    assert tracker.total_input_tokens == 1000
-    assert tracker.total_output_tokens == 500
-    assert tracker.total_cost_usd > 0
-    assert len(tracker.entries) == 1
+        assert tracker.total_input_tokens == 1000
+        assert tracker.total_output_tokens == 500
+        assert tracker.total_cost_usd > 0
+        assert len(tracker.entries) == 1
+    finally:
+        ct_mod.USAGE_FILE = orig
 
 
-def test_cost_tracker_summary():
-    tracker = CostTracker(budget_limit=10.0)
-    tracker.record("claude-sonnet-4-6", input_tokens=1000, output_tokens=500)
+def test_cost_tracker_summary(tmp_path):
+    import deepscript.llm.cost_tracker as ct_mod
+    usage_file = str(tmp_path / "usage.json")
+    orig = ct_mod.USAGE_FILE
+    ct_mod.USAGE_FILE = usage_file
+    try:
+        tracker = CostTracker(budget_limit=10.0)
+        tracker.record("claude-sonnet-4-6", input_tokens=1000, output_tokens=500)
 
-    summary = tracker.summary()
-    assert summary["calls"] == 1
-    assert summary["total_input_tokens"] == 1000
+        summary = tracker.summary()
+        assert summary["calls"] == 1
+        assert summary["total_input_tokens"] == 1000
+    finally:
+        ct_mod.USAGE_FILE = orig
 
 
 def test_render_prompt():

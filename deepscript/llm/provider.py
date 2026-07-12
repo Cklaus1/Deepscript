@@ -8,7 +8,9 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
+
+import tiktoken
 
 from deepscript.config.settings import LLMConfig
 from deepscript.llm.cost_tracker import CostTracker
@@ -95,9 +97,21 @@ class LLMProvider:
 
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
-        # Use nim_model when provider is nim and model is the default claude model
-        if config.provider == "nim" and config.model == "claude-sonnet-4-6":
-            self.config = config.model_copy(update={"model": config.nim_model})
+        # When provider != claude and model still equals the Claude default,
+        # the user likely forgot to set a model for this provider. Use the
+        # provider-specific default (nim_model) if available, otherwise log
+        # and keep the misconfigured model (the API will 404, which is the
+        # intended signal).
+        if config.provider != "claude" and config.model == "claude-sonnet-4-6":
+            if config.nim_model:
+                self.config = config.model_copy(update={"model": config.nim_model})
+            else:
+                logger.error(
+                    "Provider '%s' model is set to the Claude default "
+                    "'claude-sonnet-4-6' — this will 404. Set config.model "
+                    "or config.nim_model explicitly.",
+                    config.provider,
+                )
         self.cost_tracker = CostTracker(budget_limit=config.budget_per_month)
         # Override provider default rate limit if config specifies one
         if config.rate_limit_rpm > 0:
@@ -183,17 +197,15 @@ class LLMProvider:
         elif self.config.provider in OPENAI_COMPAT_PROVIDERS:
             import openai
             base_url = self.config.base_url or LOCAL_BASE_URLS.get(self.config.provider)
-            # Prefer the provider-specific key over the generic OPENAI_API_KEY.
-            # Otherwise an OPENAI_API_KEY in the environment (e.g. sourced from a
-            # shared .env) gets sent to NIM's endpoint and 401s. Explicit
-            # config.api_key always wins.
+            # Strict ordering: NO_KEY providers never read OPENAI_API_KEY.
+            # NIM uses NVIDIA_API_KEY. OpenAI falls back to OPENAI_API_KEY.
             api_key = self.config.api_key
-            if not api_key and self.config.provider == "nim":
-                api_key = os.environ.get("NVIDIA_API_KEY")
-            if not api_key:
-                api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key and self.config.provider in NO_KEY_PROVIDERS:
                 api_key = "not-needed"
+            elif not api_key and self.config.provider == "nim":
+                api_key = os.environ.get("NVIDIA_API_KEY")
+            elif not api_key and self.config.provider == "openai":
+                api_key = os.environ.get("OPENAI_API_KEY")
             kwargs = {}
             if base_url:
                 kwargs["base_url"] = base_url
@@ -227,16 +239,15 @@ class LLMProvider:
             try:
                 client = self._get_client()
                 start = time.monotonic()
-
                 if self.config.provider == "claude":
                     result = self._complete_anthropic(client, prompt, system, max_tokens)
                 else:
                     result = self._complete_openai_compat(client, prompt, system, max_tokens)
-
                 elapsed_ms = int((time.monotonic() - start) * 1000)
-                if self.cost_tracker.entries:
-                    self.cost_tracker.entries[-1].latency_ms = elapsed_ms
-                    self.cost_tracker.entries[-1].provider = self.config.provider
+
+                # Record cost with measured latency
+                if self.config.cost_tracking:
+                    self._record_cost(result, prompt, elapsed_ms)
 
                 return result
 
@@ -285,16 +296,16 @@ class LLMProvider:
             try:
                 client = self._get_async_client()
                 start = time.monotonic()
+                elapsed_ms = int((time.monotonic() - start) * 1000)
 
                 if self.config.provider == "claude":
-                    result = await self._complete_anthropic_async(client, prompt, system, max_tokens)
+                    result = await self._complete_anthropic_async(client, prompt, system, max_tokens, latency_ms=elapsed_ms)
                 else:
-                    result = await self._complete_openai_compat_async(client, prompt, system, max_tokens)
+                    result = await self._complete_openai_compat_async(client, prompt, system, max_tokens, latency_ms=elapsed_ms)
 
-                elapsed_ms = int((time.monotonic() - start) * 1000)
-                if self.cost_tracker.entries:
-                    self.cost_tracker.entries[-1].latency_ms = elapsed_ms
-                    self.cost_tracker.entries[-1].provider = self.config.provider
+                # Record cost with measured latency
+                if self.config.cost_tracking:
+                    self._record_cost(result, prompt, elapsed_ms)
 
                 return result
 
@@ -311,6 +322,25 @@ class LLMProvider:
         self._note_failure()
         return None
 
+    def _count_tokens(self, text: str, model: str) -> int:
+        """Estimate token count for a text string using tiktoken."""
+        # Map model name to encoding
+        encoding_name = "cl100k_base"  # default for gpt-4, gpt-3.5-turbo
+        if "gpt-4o" in model:
+            encoding_name = "cl100k_base"
+        elif "gpt-3.5" in model or "gpt4o" in model:
+            encoding_name = "cl100k_base"
+        elif "davinci" in model or "text-davinci" in model:
+            encoding_name = "p50k_base"
+        elif "code" in model:
+            encoding_name = "p50k_base"
+        try:
+            enc = tiktoken.get_encoding(encoding_name)
+        except Exception:
+            # Fallback: rough char/4 estimate
+            return max(1, len(text) // 4)
+        return len(enc.encode(text))
+
     async def complete_json_async(
         self,
         prompt: str,
@@ -325,7 +355,7 @@ class LLMProvider:
 
     # --- Provider-specific implementations ---
 
-    def _complete_anthropic(self, client: Any, prompt: str, system: str | None, max_tokens: int | None) -> str:
+    def _complete_anthropic(self, client: Any, prompt: str, system: str | None, max_tokens: int | None, latency_ms: int = 0) -> str:
         kwargs: dict[str, Any] = {
             "model": self.config.model,
             "max_tokens": max_tokens or self.config.max_tokens,
@@ -334,11 +364,9 @@ class LLMProvider:
         if system:
             kwargs["system"] = system
         response = client.messages.create(**kwargs)
-        if hasattr(response, "usage") and self.config.cost_tracking:
-            self.cost_tracker.record(self.config.model, response.usage.input_tokens, response.usage.output_tokens)
         return response.content[0].text
 
-    async def _complete_anthropic_async(self, client: Any, prompt: str, system: str | None, max_tokens: int | None) -> str:
+    async def _complete_anthropic_async(self, client: Any, prompt: str, system: str | None, max_tokens: int | None, latency_ms: int = 0) -> str:
         kwargs: dict[str, Any] = {
             "model": self.config.model,
             "max_tokens": max_tokens or self.config.max_tokens,
@@ -347,11 +375,9 @@ class LLMProvider:
         if system:
             kwargs["system"] = system
         response = await client.messages.create(**kwargs)
-        if hasattr(response, "usage") and self.config.cost_tracking:
-            self.cost_tracker.record(self.config.model, response.usage.input_tokens, response.usage.output_tokens)
         return response.content[0].text
 
-    def _complete_openai_compat(self, client: Any, prompt: str, system: str | None, max_tokens: int | None) -> str:
+    def _complete_openai_compat(self, client: Any, prompt: str, system: str | None, max_tokens: int | None, latency_ms: int = 0) -> str:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -360,15 +386,25 @@ class LLMProvider:
             model=self.config.model, messages=messages,
             max_tokens=max_tokens or self.config.max_tokens,
         )
-        if hasattr(response, "usage") and response.usage and self.config.cost_tracking:
-            self.cost_tracker.record(
-                self.config.model,
-                getattr(response.usage, "prompt_tokens", 0) or 0,
-                getattr(response.usage, "completion_tokens", 0) or 0,
-            )
         return response.choices[0].message.content
 
-    async def _complete_openai_compat_async(self, client: Any, prompt: str, system: str | None, max_tokens: int | None) -> str:
+    def _record_cost(self, result: str, prompt: str, latency_ms: int) -> None:
+        if not self.config.cost_tracking:
+            return
+        try:
+            prompt_tokens = self._count_tokens(prompt, self.config.model)
+            completion_tokens = self._count_tokens(result, self.config.model)
+            self.cost_tracker.record(
+                self.config.model,
+                prompt_tokens,
+                completion_tokens,
+                latency_ms=latency_ms,
+                provider=self.config.provider,
+            )
+        except Exception:
+            pass
+
+    async def _complete_openai_compat_async(self, client: Any, prompt: str, system: str | None, max_tokens: int | None, latency_ms: int = 0) -> str:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -377,12 +413,6 @@ class LLMProvider:
             model=self.config.model, messages=messages,
             max_tokens=max_tokens or self.config.max_tokens,
         )
-        if hasattr(response, "usage") and response.usage and self.config.cost_tracking:
-            self.cost_tracker.record(
-                self.config.model,
-                getattr(response.usage, "prompt_tokens", 0) or 0,
-                getattr(response.usage, "completion_tokens", 0) or 0,
-            )
         return response.choices[0].message.content
 
     # --- JSON parsing ---

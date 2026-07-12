@@ -4,7 +4,6 @@ from deepscript.core.speaker_signals import (
     extract_cross_speaker_references,
     extract_names_from_title,
     detect_self_identification,
-    extract_relationships,
     compute_speaking_durations,
     filter_low_confidence_segments,
     compute_name_frequencies,
@@ -12,7 +11,6 @@ from deepscript.core.speaker_signals import (
     match_title_names_to_speakers,
     compute_speaker_role_scores,
     match_roles_to_contacts,
-    build_relationship_graph,
     match_duration_to_calendar,
     extract_company_mentions,
 )
@@ -155,29 +153,6 @@ def test_match_title_names_to_speakers():
     assert len(results) >= 1
     names = [r["name"] for r in results]
     assert "Graham" in names
-
-
-# --- Relationships ---
-
-def test_extract_relationships_spouse():
-    """Detect 'my wife Ingrid' pattern."""
-    segments = [
-        {"text": "My wife Ingrid said we should go", "speaker_cluster_id": "spk_00"},
-    ]
-    results = extract_relationships(segments)
-    assert len(results) >= 1
-    names = [r.name for r in results]
-    assert "Ingrid" in names
-
-
-def test_extract_relationships_parent():
-    """Detect 'my dad John' pattern."""
-    segments = [
-        {"text": "My dad John told me to call", "speaker_cluster_id": "spk_00"},
-    ]
-    results = extract_relationships(segments)
-    names = [r.name for r in results]
-    assert "John" in names
 
 
 # --- Speaking Durations ---
@@ -339,25 +314,3 @@ def test_find_elimination_candidates_no_unknowns():
     assert results == []
 
 
-# --- Relationship Graph ---
-
-def test_build_relationship_graph():
-    """Build relationship graph across transcripts."""
-    transcripts = [
-        (
-            type("P", (), {"stem": "test"})(),
-            {
-                "segments": [{"text": "My wife Ingrid said hello", "speaker_cluster_id": "spk_00"}],
-                "diarization": {
-                    "speakers_resolved": [
-                        {"speaker_cluster_id": "spk_00"},
-                        {"speaker_cluster_id": "spk_01"},
-                    ],
-                },
-            },
-        ),
-    ]
-    graph = build_relationship_graph(transcripts)
-    assert "spk_00" in graph
-    names = [r.name for r in graph["spk_00"]]
-    assert "Ingrid" in names

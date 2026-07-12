@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,28 @@ class CostTracker:
     total_output_tokens: int = 0
     total_cost_usd: float = 0.0
     budget_exceeded: bool = False
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Seed totals from persisted usage file so the budget check is
+        accurate across restarts (e.g. cron runs that each create a new
+        tracker)."""
+        if not self.entries and Path(USAGE_FILE).exists():
+            try:
+                for line in USAGE_FILE.read_text().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = UsageEntry(**json.loads(line))
+                    self.entries.append(entry)
+                    self.total_input_tokens += entry.input_tokens
+                    self.total_output_tokens += entry.output_tokens
+                    self.total_cost_usd += entry.cost_usd
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    "Failed to seed CostTracker from %s; starting fresh",
+                    USAGE_FILE,
+                )
 
     def record(
         self,
@@ -57,33 +80,38 @@ class CostTracker:
         provider: str = "",
     ) -> None:
         """Record a single LLM call's token usage and performance."""
-        pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
-        cost = (
-            input_tokens * pricing["input"] / 1_000_000
-            + output_tokens * pricing["output"] / 1_000_000
-        )
-
-        entry = UsageEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=round(cost, 6),
-            latency_ms=latency_ms,
-            provider=provider,
-        )
-        self.entries.append(entry)
-        self.total_input_tokens += input_tokens
-        self.total_output_tokens += output_tokens
-        self.total_cost_usd += cost
-
-        if self.total_cost_usd > self.budget_limit:
-            logger.warning(
-                "LLM cost ($%.4f) exceeds monthly budget ($%.2f)",
-                self.total_cost_usd,
-                self.budget_limit,
+        with self._lock:
+            # Free-tier providers (local/self-hosted) have zero cost.
+            if provider in {"ollama", "vllm", "sglang", "nim"}:
+                pricing = {"input": 0.0, "output": 0.0}
+            else:
+                pricing = MODEL_PRICING.get(model, {"input": 0.0, "output": 0.0})
+            cost = (
+                input_tokens * pricing["input"] / 1_000_000
+                + output_tokens * pricing["output"] / 1_000_000
             )
-            self.budget_exceeded = True
+
+            entry = UsageEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=round(cost, 6),
+                latency_ms=latency_ms,
+                provider=provider,
+            )
+            self.entries.append(entry)
+            self.total_input_tokens += input_tokens
+            self.total_output_tokens += output_tokens
+            self.total_cost_usd += cost
+
+            if self.total_cost_usd >= self.budget_limit:
+                logger.warning(
+                    "LLM cost ($%.4f) exceeds monthly budget ($%.2f)",
+                    self.total_cost_usd,
+                    self.budget_limit,
+                )
+                self.budget_exceeded = True
 
     def summary(self) -> dict[str, Any]:
         """Return a summary of this session's usage."""
@@ -97,12 +125,14 @@ class CostTracker:
 
     def persist(self, source_file: str = "", call_type: str = "") -> None:
         """Append this session's entries to persistent usage log."""
-        if not self.entries:
-            return
+        with self._lock:
+            if not self.entries:
+                return
+            entries_snapshot = list(self.entries)
 
         USAGE_DIR.mkdir(parents=True, exist_ok=True)
         with open(USAGE_FILE, "a", encoding="utf-8") as f:
-            for entry in self.entries:
+            for entry in entries_snapshot:
                 entry.source_file = source_file
                 entry.call_type = call_type
                 f.write(json.dumps(asdict(entry), default=str) + "\n")

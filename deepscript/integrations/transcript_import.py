@@ -15,9 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +79,7 @@ def fireflies_to_deepscript(
 
     # Merge speaker names from transcript with attendee names
     all_speakers = list(
-        set(speaker_names + [a["name"] for a in resolved_attendees if a["name"]])
+        set(speaker_names + [a.get("name", "?") for a in resolved_attendees if a.get("name", "?")])
     )
 
     # Parse summary
@@ -255,7 +256,7 @@ async def _fetch_fireflies(
     to_date: str | None = None,
     limit: int = 50,
     max_pages: int = 50,
-) -> list[dict]:
+) -> list[dict | tuple[str, dict]]:
     """Fetch transcripts from Fireflies via BFlow MCP client.
 
     Falls back to scanning transcripts/fireflies/ for pre-fetched meeting
@@ -282,6 +283,13 @@ async def _fetch_fireflies(
             if isinstance(tx_text, dict):
                 tx_text = json.dumps(tx_text)
             meetings.append({"meeting": {"id": meeting_id}, "transcript_text": tx_text})
+        else:
+            logger.error(
+                "Failed to fetch Fireflies transcript for %s: %s",
+                meeting_id,
+                result.get("error", "unknown"),
+            )
+            meetings.append({"meeting": {"id": meeting_id}, "transcript_text": "", "fetch_failed": True})
     else:
         list_result = await fireflies_list_meetings(
             limit=min(limit, 50),
@@ -311,7 +319,13 @@ async def _fetch_fireflies(
                 tx_text = tx_result.get("result", "")
                 if isinstance(tx_text, dict):
                     tx_text = json.dumps(tx_text)
-            meetings.append({"meeting": m, "transcript_text": tx_text})
+            else:
+                logger.error(
+                    "Failed to fetch Fireflies transcript for %s: %s",
+                    mid,
+                    tx_result.get("error", "unknown"),
+                )
+            meetings.append({"meeting": m, "transcript_text": tx_text, "fetch_failed": not tx_result.get("success")})
 
     return meetings
 
@@ -346,8 +360,7 @@ def _fetch_fireflies_local(
     if from_date:
         cutoff = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     elif days:
-        cutoff = cutoff.replace(hour=0, minute=0, second=0)
-        from datetime import timedelta
+        cutoff = cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
         cutoff = cutoff - timedelta(days=days)
 
     meetings = []
@@ -375,14 +388,18 @@ def _fetch_fireflies_local(
                 date_str = name_match.group(1)
         if date_str:
             try:
-                m_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                m_date = datetime.strptime(date_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
                 if m_date < cutoff:
                     continue
+                if to_date:
+                    to_dt = datetime.strptime(to_date[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    if m_date > to_dt:
+                        continue
             except ValueError:
                 pass  # Can't parse date, include anyway
 
         # If already in DeepScript format (has segments), return as-is
-        if meeting.get("segments") and len(meeting.get("segments", [])) > 1:
+        if meeting.get("segments"):
             meetings.append(meeting)
             continue
 
@@ -425,10 +442,15 @@ async def _fetch_circleback(
     meetings = []
 
     if meeting_id:
-        result = await circleback_get_meeting(int(meeting_id))
+        try:
+            mid_int = int(meeting_id)
+        except ValueError:
+            logger.warning("Circleback meeting_id %r is not numeric, skipping", meeting_id)
+            return meetings
+        result = await circleback_get_meeting(mid_int)
         if result.get("success"):
             meeting = _parse_mcp_result(result)
-            tx_result = await circleback_get_transcript(int(meeting_id))
+            tx_result = await circleback_get_transcript(mid_int)
             if tx_result.get("success"):
                 if isinstance(meeting, dict):
                     meeting["transcript"] = _parse_mcp_result(tx_result)
@@ -515,7 +537,7 @@ def _fetch_circleback_local(
                 pass
 
         # If already in DeepScript format (has segments), return as-is
-        if meeting.get("segments") and len(meeting["segments"]) > 1:
+        if meeting.get("segments"):
             meetings.append(meeting)
             continue
 
@@ -651,8 +673,10 @@ def import_transcripts(
                 skipped += 1
                 continue
 
-            with open(filepath, "w") as f:
+            tmp_path = filepath.with_suffix(".json.tmp")
+            with open(tmp_path, "w") as f:
                 json.dump(converted, f, indent=2, default=str)
+            os.replace(tmp_path, filepath)
 
             files.append(str(filepath))
             imported += 1
@@ -696,7 +720,7 @@ def _parse_fireflies_transcript(text: str) -> tuple[list[dict], list[str]]:
             continue
 
         # Match "Speaker Name: text"
-        m = re.match(r'^([A-Z][^:]{1,50}):\s+(.+)$', line)
+        m = re.match(r'^([^\W\d_][^:]{1,50}):\s+(.+)$', line)
         if not m:
             continue
 

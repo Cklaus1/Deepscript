@@ -14,6 +14,7 @@ from deepscript.config.settings import get_settings
 def prep(
     call_type: str = typer.Argument(help="Call type to prep for (e.g., sales-call, discovery-call)."),
     config_file: Optional[str] = typer.Option(None, "--config", "-c", help="Config file path."),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Assemble call prep notes from previous call patterns and playbooks."""

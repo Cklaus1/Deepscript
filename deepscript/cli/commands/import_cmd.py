@@ -18,6 +18,7 @@ def import_transcripts_cmd(
     to_date: Optional[str] = typer.Option(None, "--to-date", help="End date (YYYY-MM-DD)."),
     meeting_id: Optional[str] = typer.Option(None, "--meeting-id", "-m", help="Import a specific meeting by ID."),
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Run deepscript analyze after import."),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Import transcripts from external meeting services for deep analysis."""

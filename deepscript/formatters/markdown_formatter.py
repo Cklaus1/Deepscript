@@ -16,6 +16,7 @@ def _esc(text: str | None) -> str:
     if not text:
         return ""
     # Escape characters that could break markdown or inject HTML
+    text = text.replace("\n", " ").replace("\r", " ")  # Newlines break table rows
     text = text.replace("|", "\\|")  # Table cell breaker
     text = text.replace("<", "&lt;").replace(">", "&gt;")  # HTML injection
     return text
@@ -185,7 +186,7 @@ def _render_methodology_score(lines: list[str], sections: dict[str, Any]) -> Non
         for dim, data in scores.items():
             if isinstance(data, dict):
                 s = data.get("score", "?")
-                evidence = data.get("evidence", "")[:80]
+                evidence = str(data.get("evidence") or "")[:80]
                 lines.append(f"| {_esc(dim)} | {s}/3 | {_esc(evidence)} |")
         lines.append("")
 
@@ -275,7 +276,7 @@ def _render_discovery(lines: list[str], sections: dict[str, Any]) -> None:
             pain = p.get("pain", "")
             severity = p.get("severity", "")
             workaround = p.get("workaround") or "-"
-            lines.append(f"| {_esc(pain[:60])} | {severity} | {_esc(workaround[:40])} |")
+            lines.append(f"| {_esc(str(pain)[:60])} | {severity} | {_esc(str(workaround)[:40])} |")
         lines.append("")
 
     if jtbd:
@@ -324,7 +325,8 @@ def _render_pmf(lines: list[str], sections: dict[str, Any]) -> None:
     if pmf_score is None and not dimensions:
         return
 
-    lines.append(f"## Product-Market Fit Score: {pmf_score}/10")
+    score_display = pmf_score if pmf_score is not None else "N/A"
+    lines.append(f"## Product-Market Fit Score: {score_display}/10")
     lines.append("")
 
     if ellis:
@@ -406,7 +408,7 @@ def _render_interview(lines: list[str], sections: dict[str, Any]) -> None:
         for a in answers:
             q = a.get("question", "")
             strength = a.get("evidence_strength", "")
-            star_score = a.get("star_completeness", {}).get("score", "")
+            star_score = (a.get("star_completeness") or {}).get("score", "")
             lines.append(f"- **Q:** {q}")
             lines.append(f"  - STAR: {star_score} | Evidence: {strength}")
             competencies = a.get("competencies", [])
@@ -580,8 +582,8 @@ def _render_relationship(lines: list[str], sections: dict[str, Any]) -> None:
         lines.append("| Bid | Response | Quality |")
         lines.append("|-----|----------|---------|")
         for b in bids:
-            bid = b.get("bid", "")[:50]
-            response = b.get("response", "")[:50]
+            bid = str(b.get("bid") or "")[:50]
+            response = str(b.get("response") or "")[:50]
             quality = b.get("quality", "")
             icon = {"toward": "turned toward", "away": "turned away", "against": "turned against"}.get(quality, quality)
             lines.append(f"| {_esc(bid)} | {_esc(response)} | {icon} |")

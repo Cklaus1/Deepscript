@@ -347,10 +347,10 @@ async def _analyze_parallel(
     output_dir: str | None,
     concurrency: int,
     show_progress: bool,
-) -> tuple[list[AnalysisContext], int]:
+) -> tuple[list[AnalysisContext], int, int]:
     """Process files in parallel using asyncio + thread pool.
 
-    Returns (contexts, skipped_count).
+    Returns (contexts, skipped_count, failure_count).
     """
     sem = asyncio.Semaphore(concurrency)
     contexts: list[AnalysisContext] = []
@@ -366,10 +366,10 @@ async def _analyze_parallel(
             files_to_process.append(fp)
 
     if not files_to_process:
-        return contexts, skipped
+        return contexts, skipped, 0
 
     async def process_one(fp: Path, progress_cb: Any = None) -> None:
-        nonlocal skipped
+        nonlocal skipped, failures
         async with sem:
             # Run the sync analysis in a thread to not block the event loop
             ac = await asyncio.to_thread(
@@ -381,9 +381,12 @@ async def _analyze_parallel(
             if ac:
                 if _record_result(ac, fp, manifest, output_dir):
                     contexts.append(ac)
+                else:
+                    failures += 1
             else:
                 if manifest:
                     manifest.record(fp, "failed")
+                failures += 1
 
         if progress_cb:
             progress_cb(fp, ac)
@@ -404,14 +407,28 @@ async def _analyze_parallel(
                 status = f"[green]{ac.classification.call_type}[/green]" if ac else "[red]failed[/red]"
                 progress.update(task, advance=1, status=status)
 
+            failures = 0
             tasks = [process_one(fp, on_done) for fp in files_to_process]
-            await asyncio.gather(*tasks, return_exceptions=True)
-            progress.update(task, status=f"[bold green]Done — {len(contexts)} processed[/bold green]")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for fp, result in zip(files_to_process, results):
+                if isinstance(result, Exception):
+                    logger.error("Task failed for %s: %s", fp, result)
+                    failures += 1
+                    if manifest:
+                        manifest.record(fp, "failed")
+            progress.update(task, status=f"[bold green]Done — {len(contexts)} processed, {failures} failed[/bold green]")
     else:
+        failures = 0
         tasks = [process_one(fp) for fp in files_to_process]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for fp, result in zip(files_to_process, results):
+            if isinstance(result, Exception):
+                logger.error("Task failed for %s: %s", fp, result)
+                failures += 1
+                if manifest:
+                    manifest.record(fp, "failed")
 
-    return contexts, skipped
+    return contexts, skipped, failures
 
 
 # --- CLI command ---
@@ -476,12 +493,13 @@ def analyze(
 
         contexts: list[AnalysisContext] = []
         skipped = 0
+        failures = 0
         interrupted = False
 
         try:
             if use_parallel and is_batch:
                 # Parallel batch with asyncio
-                contexts, skipped = asyncio.run(
+                contexts, skipped, failures = asyncio.run(
                     _analyze_parallel(
                         files, settings, llm, analyzers, call_type, calendar,
                         relationship_insights, cms or settings.cms.enabled,
@@ -512,15 +530,25 @@ def analyze(
                     if ac:
                         if _record_result(ac, fp, manifest, output_dir):
                             contexts.append(ac)
+                        else:
+                            failures += 1
                     else:
                         if manifest:
                             manifest.record(fp, "failed")
+                        failures += 1
         except KeyboardInterrupt:
             interrupted = True
             logger.info("Interrupted — saving progress (%d processed)", len(contexts))
         finally:
             if manifest and manifest_path:
                 manifest.save(manifest_path)
+
+        if failures:
+            cli_ctx.console.print(
+                f"[yellow]Warning: {failures} file(s) failed analysis[/yellow]",
+                file=cli_ctx.console.stderr,
+            )
+            raise typer.Exit(code=ExitCode.ANALYSIS_FAILURE)
 
         # --- Speaker identification + writeback (automatic) ---
         # Runs after batch analysis to identify speakers across all transcripts

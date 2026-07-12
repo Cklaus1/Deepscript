@@ -24,6 +24,7 @@ def classify(
         "-c",
         help="Path to .deepscript.yaml config file.",
     ),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Classify a transcript and show the detected call type."""

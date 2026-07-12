@@ -26,7 +26,7 @@ def benchmark(
         help="Comma-separated model IDs to test. Default: auto-discover from catalog.",
     ),
     top_n: int = typer.Option(
-        10,
+        5,
         "--top",
         "-n",
         help="Number of top models to benchmark from catalog (when auto-discovering).",
@@ -66,6 +66,7 @@ def benchmark(
         "--trend",
         help="Show quality trend for a specific model across all runs.",
     ),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Benchmark LLM models for transcript analysis quality and performance.

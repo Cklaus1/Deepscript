@@ -68,7 +68,14 @@ def generate_crm_pages(
         "interactions": [],
     }
 
-    # Write person pages
+    # Write person pages — disambiguate collisions via cluster_id suffix
+    person_sanitized = Counter()
+    for cid, profile in profiles.items():
+        if not profile.likely_name:
+            continue
+        if profile.total_calls < min_calls:
+            continue
+        person_sanitized[_sanitize(profile.likely_name)] += 1
     for cid, profile in profiles.items():
         if not profile.likely_name:
             continue
@@ -77,12 +84,17 @@ def generate_crm_pages(
         calls = call_details.get(cid, [])
         page = _render_person_page(profile, calls, speaker_db.get(cid, {}), profiles)
         safe_name = _sanitize(profile.likely_name)
+        if person_sanitized[safe_name] > 1:
+            safe_name = f"{safe_name}-{cid[:6]}"
         fp = output_path / "people" / f"{safe_name}.md"
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(page, encoding="utf-8")
         written["people"].append(fp)
 
-    # Write company pages
+    # Write company pages — disambiguate collisions via company string hash
+    company_sanitized = Counter()
+    for company in company_people:
+        company_sanitized[_sanitize(company)] += 1
     for company, cids in company_people.items():
         people_pages = []
         for cid in cids:
@@ -90,7 +102,10 @@ def generate_crm_pages(
             if p and p.likely_name:
                 people_pages.append(_sanitize(p.likely_name))
         page = _render_company_page(company, people_pages)
-        fp = output_path / "companies" / f"{_sanitize(company)}.md"
+        safe_company = _sanitize(company)
+        if company_sanitized[safe_company] > 1:
+            safe_company = f"{safe_company}-{hashlib.sha1(company.encode('utf-8')).hexdigest()[:6]}"
+        fp = output_path / "companies" / f"{safe_company}.md"
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(page, encoding="utf-8")
         written["companies"].append(fp)
@@ -123,7 +138,7 @@ def generate_crm_pages(
             written["interactions"].append(fp)
 
     # Write global task index
-    _write_task_index(call_details, output_path)
+    _write_task_index(call_details, output_path, profiles)
 
     total = sum(len(v) for v in written.values())
     logger.info("Generated %d CRM pages (%d people, %d companies, %d interactions, tasks indexed)",
@@ -220,7 +235,16 @@ def _collect_call_details(
             for ai in action_items:
                 if isinstance(ai, dict):
                     assignee = (ai.get("assignee") or ai.get("speaker") or "").lower()
-                    if speaker_name and speaker_name in assignee:
+                    if not speaker_name:
+                        continue
+                    # Exact or prefix-of-tokens match to avoid "Chris" claiming
+                    # "Chris Klaus" AND "Chris Erven"
+                    if assignee == speaker_name:
+                        my_actions.append(ai.get("text", ai.get("action", str(ai))))
+                        continue
+                    s_tokens = speaker_name.split()
+                    a_tokens = assignee.split()
+                    if s_tokens and a_tokens[:len(s_tokens)] == s_tokens:
                         my_actions.append(ai.get("text", ai.get("action", str(ai))))
 
             speaker_calls[cid].append({
@@ -253,30 +277,21 @@ def _render_person_page(
     lines.append("---")
     lines.append("type: person")
     lines.append(f"cluster_id: {profile.cluster_id}")
-    lines.append(f"name: \"{profile.likely_name}\"")
-    lines.append(f"display_name: \"{profile.display_name}\"")
+    lines.append(f"name: {json.dumps(profile.likely_name)}")
+    lines.append(f"display_name: {json.dumps(profile.display_name)}")
 
     full_name = profile.best_full_name
     if full_name and full_name != profile.likely_name:
-        lines.append(f"full_name: \"{full_name}\"")
+        lines.append(f"full_name: {json.dumps(full_name)}")
 
     lines.append(f"confidence: {profile.name_confidence:.2f}")
 
-    if profile.role:
-        lines.append(f"role: \"{profile.role}\"")
-    if profile.company:
-        lines.append(f"company: \"{profile.company}\"")
-
-    lines.append(f"total_calls: {profile.total_calls}")
-
-    if profile.total_speaking_seconds:
-        hours = profile.total_speaking_seconds / 3600
-        lines.append(f"speaking_hours: {hours:.1f}")
-
-    # Contact info
+    # Contact info — parse early so company/email/phone/title are available
+    # for frontmatter below
     contact_email = ""
     contact_phone = ""
     contact_title = ""
+    contact_company = ""
     for ev in profile.evidence:
         if ev.source == "contacts" and ev.detail:
             detail = ev.detail
@@ -295,9 +310,22 @@ def _render_person_page(
                     contact_title = after_name[1].strip().rstrip(",")
             break
 
-    lines.append(f"email: \"{contact_email}\"")
-    lines.append(f"phone: \"{contact_phone}\"")
-    lines.append(f"title: \"{contact_title}\"")
+    if profile.role:
+        lines.append(f"role: {json.dumps(profile.role)}")
+    if profile.company:
+        lines.append(f"company: {json.dumps(profile.company)}")
+    elif contact_company:
+        lines.append(f"company: {json.dumps(contact_company)}")
+
+    lines.append(f"total_calls: {profile.total_calls}")
+
+    if profile.total_speaking_seconds:
+        hours = profile.total_speaking_seconds / 3600
+        lines.append(f"speaking_hours: {hours:.1f}")
+
+    lines.append(f"email: {json.dumps(contact_email)}")
+    lines.append(f"phone: {json.dumps(contact_phone)}")
+    lines.append(f"title: {json.dumps(contact_title)}")
     lines.append(f"linkedin: \"\"")
 
     if calls:
@@ -464,14 +492,14 @@ def _write_interaction_page(
     lines = [
         "---",
         "type: interaction",
-        f"title: \"{call.get('title', '')}\"",
-        f"date: \"{call.get('date', '')}\"",
-        f"call_type: \"{call.get('type', '')}\"",
+        f"title: {json.dumps(call.get('title', ''))}",
+        f"date: {json.dumps(call.get('date', ''))}",
+        f"call_type: {json.dumps(call.get('type', ''))}",
         f"duration_min: {call.get('duration_min', 0)}",
-        f"file: \"{call.get('file', '')}\"",
+        f"file: {json.dumps(call.get('file', ''))}",
     ]
     if cms.get("episode_id"):
-        lines.append(f"cms_episode_id: \"{cms['episode_id']}\"")
+        lines.append(f"cms_episode_id: {json.dumps(cms['episode_id'])}")
     lines.append("---")
     lines.append("")
     lines.append(f"# {call.get('title', 'Call')}")
@@ -528,7 +556,11 @@ def _write_interaction_page(
 # Task index
 # ---------------------------------------------------------------------------
 
-def _write_task_index(call_details: dict[str, list[dict[str, Any]]], output_path: Path) -> None:
+def _write_task_index(
+    call_details: dict[str, list[dict[str, Any]]],
+    output_path: Path,
+    profiles: dict[str, SpeakerProfile],
+) -> None:
     all_tasks: list[dict[str, str]] = []
 
     for cid, calls in call_details.items():
@@ -556,8 +588,12 @@ def _write_task_index(call_details: dict[str, list[dict[str, Any]]], output_path
 
     for t in sorted(all_tasks, key=lambda x: x.get("date", "")):
         assignee_cid = t["assignee"]
-        # We'll use the CID as a placeholder; the person page link is resolved by the reader
-        lines.append(f"| {t['text']} | {assignee_cid} | {t['date']} | {t['call']} |")
+        profile = profiles.get(assignee_cid)
+        assignee_display = profile.display_name if profile else assignee_cid
+        # Escape pipes in free-form text and call titles
+        text = str(t["text"]).replace("|", "\\|")
+        call = str(t["call"]).replace("|", "\\|")
+        lines.append(f"| {text} | {assignee_display} | {t['date']} | {call} |")
 
     lines.append("")
     fp = output_path / "_Tasks.md"
@@ -569,7 +605,7 @@ def _write_task_index(call_details: dict[str, list[dict[str, Any]]], output_path
 # ---------------------------------------------------------------------------
 
 def _sanitize(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9 _\-]", "", name).strip() or "untitled"
+    return re.sub(r"[^\w \-]", "", name, flags=re.UNICODE).strip() or "untitled"
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +621,7 @@ def generate_contact_pages(
     min_calls: int = 2,
 ) -> list[Path]:
     """Legacy wrapper — delegates to generate_crm_pages for compatibility."""
-    generate_crm_pages(
+    written = generate_crm_pages(
         profiles=profiles,
         transcript_dir=transcript_dir,
         analysis_dir=analysis_dir,
@@ -593,7 +629,7 @@ def generate_contact_pages(
         speaker_db_path=speaker_db_path,
         min_calls=min_calls,
     )
-    return list(Path(output_dir).glob("*.md"))
+    return [p for v in written.values() for p in v]
 
 
 def generate_contacts_summary(

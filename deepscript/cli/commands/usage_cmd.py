@@ -35,6 +35,7 @@ def usage(
         "--clear",
         help="Clear usage history.",
     ),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """View LLM token usage, costs, and budget status."""

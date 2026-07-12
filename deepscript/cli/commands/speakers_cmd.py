@@ -12,14 +12,15 @@ from deepscript.cli.output import CLIContext, OutputFormat, emit
 
 
 def speakers(
-    action: str = typer.Argument(help="Action: identify | profile | list"),
-    name_or_id: Optional[str] = typer.Argument(None, help="Speaker name or cluster ID (for profile)."),
+    action: str = typer.Argument(help="Action: identify | profile | list | pages | dedup | unmerge | not-same"),
+    name_or_id: Optional[str] = typer.Argument(None, help="Speaker name or cluster ID (for profile, pages, dedup, unmerge, not-same)."),
     transcripts: Optional[str] = typer.Option(None, "--transcripts", "-t", help="Transcript directory."),
     speaker_db: Optional[str] = typer.Option(None, "--speaker-db", help="AudioScript speaker_identities.json path."),
     calendar: str = typer.Option("none", "--calendar", help="Calendar provider: ms365 | google | none."),
     contacts: str = typer.Option("none", "--contacts", help="Contacts provider: ms365 | google | none."),
     writeback: bool = typer.Option(False, "--writeback", help="Write identified names back to speaker DB."),
     min_confidence: float = typer.Option(0.40, "--min-confidence", help="Minimum confidence for writeback."),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json | yaml | table (default: auto)."),
     ctx: typer.Context = typer.Option(None, hidden=True),
 ) -> None:
     """Cross-call speaker identification and profiles."""
