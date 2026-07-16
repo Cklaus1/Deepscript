@@ -51,25 +51,34 @@ class CostTracker:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Seed totals from persisted usage file so the budget check is
-        accurate across restarts (e.g. cron runs that each create a new
-        tracker)."""
-        if not self.entries and Path(USAGE_FILE).exists():
-            try:
-                for line in USAGE_FILE.read_text().splitlines():
+        """Seed running totals from the persisted usage file so the budget
+        check is accurate across restarts (e.g. cron runs that each create a
+        new tracker).
+
+        Streams the file and accumulates totals only — historical entries are
+        NOT loaded into ``self.entries``. That keeps ``self.entries`` meaning
+        "recorded by this tracker" so ``persist()`` appends only new lines
+        instead of rewriting the whole history (which grew the log
+        quadratically) and lets seeding run in constant memory over a large
+        log.
+        """
+        if self.entries or not Path(USAGE_FILE).exists():
+            return
+        try:
+            with open(USAGE_FILE, "r", encoding="utf-8") as f:
+                for line in f:
                     line = line.strip()
                     if not line:
                         continue
-                    entry = UsageEntry(**json.loads(line))
-                    self.entries.append(entry)
-                    self.total_input_tokens += entry.input_tokens
-                    self.total_output_tokens += entry.output_tokens
-                    self.total_cost_usd += entry.cost_usd
-            except (json.JSONDecodeError, TypeError):
-                logger.warning(
-                    "Failed to seed CostTracker from %s; starting fresh",
-                    USAGE_FILE,
-                )
+                    try:
+                        data = json.loads(line)
+                        self.total_input_tokens += int(data.get("input_tokens", 0))
+                        self.total_output_tokens += int(data.get("output_tokens", 0))
+                        self.total_cost_usd += float(data.get("cost_usd", 0.0))
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue  # skip a corrupt line, keep seeding
+        except OSError as e:
+            logger.warning("Failed to seed CostTracker from %s: %s", USAGE_FILE, e)
 
     def record(
         self,
@@ -114,12 +123,17 @@ class CostTracker:
                 self.budget_exceeded = True
 
     def summary(self) -> dict[str, Any]:
-        """Return a summary of this session's usage."""
+        """Return a summary of this session's usage.
+
+        Computed from ``self.entries`` (calls recorded by this tracker), not
+        the cumulative ``total_*`` fields — those are seeded from the persisted
+        log for the budget guard and would otherwise report historical usage.
+        """
         return {
             "calls": len(self.entries),
-            "total_input_tokens": self.total_input_tokens,
-            "total_output_tokens": self.total_output_tokens,
-            "total_cost_usd": round(self.total_cost_usd, 6),
+            "total_input_tokens": sum(e.input_tokens for e in self.entries),
+            "total_output_tokens": sum(e.output_tokens for e in self.entries),
+            "total_cost_usd": round(sum(e.cost_usd for e in self.entries), 6),
             "budget_limit_usd": self.budget_limit,
         }
 

@@ -1,5 +1,24 @@
 # Lessons Learned
 
+## CostTracker re-persist bug — quadratic usage-log growth (2026-07-16)
+
+`CostTracker.__post_init__` seeded the budget total by loading the **entire**
+`~/.deepscript/usage.jsonl` into `self.entries`, and `persist()` appended
+**all** of `self.entries` back. So every tracker (one per `LLMProvider`, one per
+analyze run under the 3h cron) re-copied the whole history → the log grew
+quadratically to **19 GB / 81.6M lines** in 8 days (~98% duplicated). Side
+effect: `pytest` hung >8 min because any test constructing a `CostTracker`
+blocked on `read_text()` of the 19 GB file.
+
+**Rules:**
+- A seed/accumulate step must **stream** and keep only aggregate totals — never
+  retain every historical record in memory just to sum it.
+- Keep the invariant that a "session" collection (`self.entries`) holds only
+  what *this* run produced, so an append-persist can't rewrite history. If you
+  need cumulative state (budget guard), keep it in separate scalar fields.
+- A monotonically-growing append-only log needs a size guard / rotation, and
+  reads over it must be O(1) memory (line-by-line), not `read_text()`.
+
 ## Rate-Limit Handling in `fetch_all_circleback.py`
 
 Rate-limit handling is **not** delegated to third-party client libraries. It is implemented directly within the project's own scripts (`fetch_all_circleback.py`).
