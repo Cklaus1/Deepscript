@@ -19,6 +19,13 @@ blocked on `read_text()` of the 19 GB file.
 - A monotonically-growing append-only log needs a size guard / rotation, and
   reads over it must be O(1) memory (line-by-line), not `read_text()`.
 
+**Rotation added:** `rotate_usage_log()` prunes `usage.jsonl` to the most
+recent `ROTATE_KEEP_LINES` entries (default 200k) once it passes
+`ROTATE_MAX_BYTES` (default 100 MB), via write-temp + `os.replace` (atomic, so
+a crash can't corrupt the live log). It's called from `persist()`, so the log
+self-bounds with no external cron. Both thresholds are env-overridable
+(`DEEPSCRIPT_USAGE_MAX_BYTES`, `DEEPSCRIPT_USAGE_KEEP_LINES`).
+
 ## Rate-Limit Handling in `fetch_all_circleback.py`
 
 Rate-limit handling is **not** delegated to third-party client libraries. It is implemented directly within the project's own scripts (`fetch_all_circleback.py`).
