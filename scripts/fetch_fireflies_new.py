@@ -12,9 +12,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env so FIREFLIES_API_KEY is available for FirefliesMCPClient
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, verbose=True, override=True)
 
 sys.path.insert(0, "/root/projects/BTask/packages/bflow")
 
