@@ -9,6 +9,7 @@ from deepscript.llm.cost_tracker import (
     UsageEntry,
     clear_usage,
     load_usage_history,
+    rotate_usage_log,
     usage_summary,
 )
 
@@ -111,3 +112,66 @@ def test_clear_usage_no_file(tmp_path):
     with patch("deepscript.llm.cost_tracker.USAGE_FILE", usage_file):
         count = clear_usage()
     assert count == 0
+
+
+def _write_entries(path, n, start=0):
+    with open(path, "w") as f:
+        for i in range(start, start + n):
+            f.write(json.dumps({
+                "timestamp": "2026-03-25T10:00:00+00:00", "model": "m",
+                "input_tokens": 1, "output_tokens": 1, "cost_usd": 0.0,
+                "source_file": str(i), "call_type": "",
+            }) + "\n")
+
+
+def test_rotate_usage_log_prunes_to_keep_lines(tmp_path):
+    usage_file = tmp_path / "usage.jsonl"
+    _write_entries(usage_file, 1000)
+
+    with patch("deepscript.llm.cost_tracker.USAGE_FILE", usage_file):
+        rotated = rotate_usage_log(max_bytes=1000, keep_lines=100)
+
+    assert rotated is True
+    lines = usage_file.read_text().splitlines()
+    assert len(lines) == 100
+    # Keeps the *newest* entries (900..999), drops the oldest.
+    assert json.loads(lines[0])["source_file"] == "900"
+    assert json.loads(lines[-1])["source_file"] == "999"
+    # Atomic temp file is cleaned up.
+    assert not usage_file.with_suffix(".jsonl.tmp").exists()
+
+
+def test_rotate_usage_log_noop_under_cap(tmp_path):
+    usage_file = tmp_path / "usage.jsonl"
+    _write_entries(usage_file, 10)
+    before = usage_file.read_text()
+
+    with patch("deepscript.llm.cost_tracker.USAGE_FILE", usage_file):
+        rotated = rotate_usage_log(max_bytes=10**9, keep_lines=5)
+
+    assert rotated is False
+    assert usage_file.read_text() == before  # untouched
+
+
+def test_rotate_usage_log_no_file(tmp_path):
+    usage_file = tmp_path / "nonexistent.jsonl"
+    with patch("deepscript.llm.cost_tracker.USAGE_FILE", usage_file):
+        assert rotate_usage_log(max_bytes=1) is False
+
+
+def test_persist_triggers_rotation(tmp_path):
+    usage_file = tmp_path / "usage.jsonl"
+    _write_entries(usage_file, 500)  # pre-existing oversized log
+
+    with patch("deepscript.llm.cost_tracker.USAGE_DIR", tmp_path), \
+         patch("deepscript.llm.cost_tracker.USAGE_FILE", usage_file), \
+         patch("deepscript.llm.cost_tracker.ROTATE_MAX_BYTES", 1000), \
+         patch("deepscript.llm.cost_tracker.ROTATE_KEEP_LINES", 50):
+        tracker = CostTracker(budget_limit=50.0)
+        tracker.record("m", input_tokens=1, output_tokens=1)
+        tracker.persist(source_file="new", call_type="y")
+
+    lines = usage_file.read_text().splitlines()
+    assert len(lines) == 50  # bounded by keep_lines after append
+    # The just-recorded entry survives (it's among the newest).
+    assert json.loads(lines[-1])["source_file"] == "new"

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,14 @@ DEFAULT_PRICING = {"input": 3.0, "output": 15.0}
 
 USAGE_DIR = Path.home() / ".deepscript"
 USAGE_FILE = USAGE_DIR / "usage.jsonl"
+
+# Log rotation: keep the persistent usage log bounded. When it exceeds
+# ROTATE_MAX_BYTES, prune it in place to the most recent ROTATE_KEEP_LINES
+# entries. Recent history is all the budget guard and `usage` reporting need,
+# and pruning by line count gives a hard, predictable size ceiling.
+# Overridable via env for ops without a code change.
+ROTATE_MAX_BYTES = int(os.environ.get("DEEPSCRIPT_USAGE_MAX_BYTES", 100 * 1024 * 1024))
+ROTATE_KEEP_LINES = int(os.environ.get("DEEPSCRIPT_USAGE_KEEP_LINES", 200_000))
 
 
 @dataclass
@@ -51,25 +61,34 @@ class CostTracker:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Seed totals from persisted usage file so the budget check is
-        accurate across restarts (e.g. cron runs that each create a new
-        tracker)."""
-        if not self.entries and Path(USAGE_FILE).exists():
-            try:
-                for line in USAGE_FILE.read_text().splitlines():
+        """Seed running totals from the persisted usage file so the budget
+        check is accurate across restarts (e.g. cron runs that each create a
+        new tracker).
+
+        Streams the file and accumulates totals only — historical entries are
+        NOT loaded into ``self.entries``. That keeps ``self.entries`` meaning
+        "recorded by this tracker" so ``persist()`` appends only new lines
+        instead of rewriting the whole history (which grew the log
+        quadratically) and lets seeding run in constant memory over a large
+        log.
+        """
+        if self.entries or not Path(USAGE_FILE).exists():
+            return
+        try:
+            with open(USAGE_FILE, "r", encoding="utf-8") as f:
+                for line in f:
                     line = line.strip()
                     if not line:
                         continue
-                    entry = UsageEntry(**json.loads(line))
-                    self.entries.append(entry)
-                    self.total_input_tokens += entry.input_tokens
-                    self.total_output_tokens += entry.output_tokens
-                    self.total_cost_usd += entry.cost_usd
-            except (json.JSONDecodeError, TypeError):
-                logger.warning(
-                    "Failed to seed CostTracker from %s; starting fresh",
-                    USAGE_FILE,
-                )
+                    try:
+                        data = json.loads(line)
+                        self.total_input_tokens += int(data.get("input_tokens", 0))
+                        self.total_output_tokens += int(data.get("output_tokens", 0))
+                        self.total_cost_usd += float(data.get("cost_usd", 0.0))
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue  # skip a corrupt line, keep seeding
+        except OSError as e:
+            logger.warning("Failed to seed CostTracker from %s: %s", USAGE_FILE, e)
 
     def record(
         self,
@@ -114,12 +133,17 @@ class CostTracker:
                 self.budget_exceeded = True
 
     def summary(self) -> dict[str, Any]:
-        """Return a summary of this session's usage."""
+        """Return a summary of this session's usage.
+
+        Computed from ``self.entries`` (calls recorded by this tracker), not
+        the cumulative ``total_*`` fields — those are seeded from the persisted
+        log for the budget guard and would otherwise report historical usage.
+        """
         return {
             "calls": len(self.entries),
-            "total_input_tokens": self.total_input_tokens,
-            "total_output_tokens": self.total_output_tokens,
-            "total_cost_usd": round(self.total_cost_usd, 6),
+            "total_input_tokens": sum(e.input_tokens for e in self.entries),
+            "total_output_tokens": sum(e.output_tokens for e in self.entries),
+            "total_cost_usd": round(sum(e.cost_usd for e in self.entries), 6),
             "budget_limit_usd": self.budget_limit,
         }
 
@@ -136,6 +160,56 @@ class CostTracker:
                 entry.source_file = source_file
                 entry.call_type = call_type
                 f.write(json.dumps(asdict(entry), default=str) + "\n")
+
+        # Keep the append-only log bounded.
+        rotate_usage_log()
+
+
+_rotate_lock = threading.Lock()
+
+
+def rotate_usage_log(
+    max_bytes: int | None = None,
+    keep_lines: int | None = None,
+) -> bool:
+    """Prune the usage log in place if it exceeds ``max_bytes``.
+
+    Keeps the most recent ``keep_lines`` entries and rewrites the file via an
+    atomic replace (write temp + ``os.replace``), so a crash mid-rotation can
+    never truncate or corrupt the live log. Bounds the append-only log to a
+    predictable ceiling without an external cron. Returns True if it rotated.
+    """
+    max_bytes = ROTATE_MAX_BYTES if max_bytes is None else max_bytes
+    keep_lines = ROTATE_KEEP_LINES if keep_lines is None else keep_lines
+
+    with _rotate_lock:
+        try:
+            if not USAGE_FILE.exists() or USAGE_FILE.stat().st_size <= max_bytes:
+                return False
+
+            # Read the tail in constant memory: a deque drops older lines as it
+            # fills, so peak memory is ~keep_lines regardless of file size.
+            recent: deque[str] = deque(maxlen=keep_lines)
+            with open(USAGE_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        recent.append(line if line.endswith("\n") else line + "\n")
+
+            tmp = USAGE_FILE.with_suffix(USAGE_FILE.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.writelines(recent)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, USAGE_FILE)
+
+            logger.info(
+                "Rotated usage log: kept %d most-recent entries (was > %d bytes)",
+                len(recent), max_bytes,
+            )
+            return True
+        except OSError as e:
+            logger.warning("Failed to rotate usage log %s: %s", USAGE_FILE, e)
+            return False
 
 
 def load_usage_history(
