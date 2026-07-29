@@ -545,8 +545,7 @@ def analyze(
 
         if failures:
             cli_ctx.console.print(
-                f"[yellow]Warning: {failures} file(s) failed analysis[/yellow]",
-                file=cli_ctx.console.stderr,
+                f"[yellow]Warning: {failures} file(s) failed analysis[/yellow]"
             )
             raise typer.Exit(code=ExitCode.ANALYSIS_FAILURE)
 
