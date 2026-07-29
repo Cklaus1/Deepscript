@@ -144,7 +144,9 @@ class LLMProvider:
             return None
 
         if config.provider == "claude":
-            if not (config.api_key or os.environ.get("ANTHROPIC_API_KEY")):
+            # A custom base_url means a gateway/proxy (e.g. TrainLoop) fronts the
+            # API and supplies credentials itself, so no local key is required.
+            if not (config.api_key or config.base_url or os.environ.get("ANTHROPIC_API_KEY")):
                 logger.warning("ANTHROPIC_API_KEY not set, falling back to rule-based")
                 return None
             return LLMProvider(config)
@@ -192,6 +194,11 @@ class LLMProvider:
                 kwargs["api_key"] = self.config.api_key
             if self.config.base_url:
                 kwargs["base_url"] = self.config.base_url
+                # The SDK refuses to send a request with no resolvable auth, even
+                # when a gateway supplies credentials upstream. Give it a
+                # placeholder; the gateway ignores it and injects the real token.
+                if not (self.config.api_key or os.environ.get("ANTHROPIC_API_KEY")):
+                    kwargs["api_key"] = "not-needed"
             return anthropic.AsyncAnthropic(**kwargs) if async_mode else anthropic.Anthropic(**kwargs)
 
         elif self.config.provider in OPENAI_COMPAT_PROVIDERS:
